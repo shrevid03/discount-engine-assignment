@@ -21,6 +21,17 @@ import CartSummary from './components/CartSummary.jsx'
 import { parseRulesCSV, parseCartCSV } from './inputs/csv.js'
 import { parseCartPDF } from './inputs/pdfCart.js'
 import { calculateCheckout, formatRupees } from './engine/discountEngine.js'
+import sampleRulesCsv from '../sample-data/rules.csv?raw'
+import sampleCartCsv from '../sample-data/cart.csv?raw'
+import sampleCartPdf from '../sample-data/cart.pdf?url'
+import sampleSmallPdf from '../sample-data/cart-small.pdf?url'
+import sampleMalformedPdf from '../sample-data/cart-malformed.pdf?url'
+
+const SAMPLE_PDFS = [
+  { href: sampleCartPdf, name: 'cart.pdf', hint: 'the 6-item sample cart' },
+  { href: sampleSmallPdf, name: 'cart-small.pdf', hint: 'just below the cart-offer threshold' },
+  { href: sampleMalformedPdf, name: 'cart-malformed.pdf', hint: 'has bad rows' },
+]
 
 const cap = (v) => v.charAt(0).toUpperCase() + v.slice(1)
 
@@ -55,6 +66,8 @@ const S = {
     letterSpacing: '0.04em', textTransform: 'uppercase',
   },
   note: { fontSize: 11, color: '#888', marginBottom: 4 },
+  demoBar: { display: 'flex', flexWrap: 'wrap', gap: '0.5rem 1rem', alignItems: 'center', fontSize: 12, color: '#555', marginBottom: '1rem' },
+  demoBtn: { background: '#fff', border: '1px solid #131A48', color: '#131A48', borderRadius: 4, padding: '0.35rem 0.9rem', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
 }
 
 // ── Component ────────────────────────────────────────────────────
@@ -122,6 +135,11 @@ export default function App() {
     if (calculated) setNotice(`${ruleId} removed. Prices recalculated.`)
   }
 
+  function loadSamples() {
+    handleRulesLoad(sampleRulesCsv, { name: 'sample rules.csv' })
+    handleCartLoad(sampleCartCsv, { name: 'sample cart.csv' }, 'csv')
+  }
+
   const canCalculate = rules.length > 0 && cartItems.length > 0
 
   const rulesColumns = [
@@ -152,6 +170,19 @@ export default function App() {
       </div>
 
       <div style={S.main}>
+        <div style={S.demoBar}>
+          <button type="button" style={S.demoBtn} onClick={loadSamples}>Load sample data</button>
+          <span>
+            Sample cart PDFs to upload:{' '}
+            {SAMPLE_PDFS.map((f, i) => (
+              <span key={f.name}>
+                {i > 0 && ' · '}
+                <a href={f.href} download={f.name} title={f.hint} style={{ color: '#131A48' }}>{f.name}</a>
+              </span>
+            ))}
+          </span>
+        </div>
+
         <div style={S.grid2}>
           {/* Rules */}
           <div style={S.section}>

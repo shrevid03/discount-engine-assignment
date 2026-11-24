@@ -1,5 +1,7 @@
 # Opptra Discount Engine
 
+[![Tests](https://github.com/shrevid03/discount-engine-assignment/actions/workflows/test.yml/badge.svg)](https://github.com/shrevid03/discount-engine-assignment/actions/workflows/test.yml)
+
 A customer-facing cart pricing engine: each item gets the offer that saves the customer the most, stackable offers go on top, and a cart-level offer applies to the total once it crosses a threshold. Rules can come from a CSV or from plain English (parsed by an LLM, with a confirm step). Carts can come from a CSV or a PDF.
 
 **Live app:** _LIVE_URL_ (add after deploying)
@@ -12,13 +14,13 @@ cp .env.example .env.local   # optional: add a free GEMINI_API_KEY to enable pla
 npm run dev                  # http://localhost:5173
 ```
 
-Everything except the plain-English rule box works without a key. `npm test` runs the test suite (37 tests).
+Everything except the plain-English rule box works without a key. `npm test` runs the test suite (37 tests). GitHub Actions runs the tests and the build on every push.
 
 ## Try it
 
-1. Upload `sample-data/rules.csv` and `sample-data/cart.csv`, then click **Calculate Discounts**.
+1. Click **Load sample data** (or upload `sample-data/rules.csv` and `sample-data/cart.csv`), then click **Calculate Discounts**.
 2. Type a rule in plain English (or click an example), check the parsed fields, then **Confirm & add** or **Discard**. Prices update immediately.
-3. Upload `sample-data/cart.pdf` to replace the cart from a PDF. Also try `cart-small.pdf` (just below the cart-offer threshold) and `cart-malformed.pdf` (bad rows are skipped with a reason).
+3. Download a sample PDF from the links at the top of the page (or use `sample-data/`) and upload it to replace the cart: `cart.pdf`. Also try `cart-small.pdf` (just below the cart-offer threshold) and `cart-malformed.pdf` (bad rows are skipped with a reason).
 
 Expected results for the sample data:
 
