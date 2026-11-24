@@ -222,7 +222,7 @@ export async function discoverFlashModel(ai) {
 let RETRY_DELAY_MS = 1000
 export function setRetryDelayForTests(ms) { RETRY_DELAY_MS = ms }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-const isBusy = (err) => [500, 503].includes(err?.status) || /high demand|overloaded|unavailable/i.test(err?.message ?? '')
+const isBusy = (err) => [500, 503, 504].includes(err?.status) || /high demand|overloaded|unavailable|deadline/i.test(err?.message ?? '')
 const isQuota = (err) => err?.status === 429
 const isMissingModel = (err) => err?.status === 404
 
