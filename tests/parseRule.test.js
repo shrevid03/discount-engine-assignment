@@ -83,6 +83,17 @@ describe('server parseRuleText', () => {
     expect(models).toEqual([MODEL, FALLBACK_MODEL])
   })
 
+  it('uses the backup model when the key has no access to the main one', async () => {
+    const models = []
+    const client = { models: { generateContent: async (p) => {
+      models.push(p.model)
+      if (p.model === MODEL) throw new ApiError({ status: 404, message: 'models/x is not found' })
+      return textResponse({ status: 'ambiguous', clarification: 'x' })
+    } } }
+    expect((await parseRuleText('hi', {}, client)).ok).toBe(true)
+    expect(models).toEqual([MODEL, FALLBACK_MODEL])
+  })
+
   it('handles invalid JSON from the model', async () => {
     const res = await parseRuleText('hi', {}, fakeClient(resp('not json')))
     expect(res).toMatchObject({ ok: false, status: 502 })

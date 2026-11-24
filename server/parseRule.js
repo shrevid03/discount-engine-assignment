@@ -15,8 +15,10 @@ import { createRateLimiter } from './rateLimit.js'
 
 // Override with GEMINI_MODEL if Google retires this model name.
 export const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
-// Used when the main model is overloaded or out of free-tier quota (quotas are per model).
-export const FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash-lite'
+// Used when the main model is overloaded, out of free-tier quota (quotas are per model),
+// or not offered to this key (new Google projects don't always get older model versions).
+// "gemini-flash-latest" is Google's alias for its current Flash model.
+export const FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-flash-latest'
 export const MAX_INPUT_CHARS = 500
 export const MAX_BODY_BYTES = 8_000
 const UPSTREAM_TIMEOUT_MS = 15_000
@@ -109,7 +111,7 @@ export async function parseRuleText(text, context = {}, client = null) {
       if (isBusy(err)) {
         await sleep(RETRY_DELAY_MS)
         try { return await call(withSchema, MODEL) } catch (again) { if (!isBusy(again) && !isQuota(again)) throw again }
-      } else if (!isQuota(err)) throw err
+      } else if (!isQuota(err) && !isMissingModel(err)) throw err
       if (!FALLBACK_MODEL || FALLBACK_MODEL === MODEL) throw err
       console.warn(`[parse-rule] ${MODEL} unavailable (${googleReason(err)}), trying ${FALLBACK_MODEL}`)
       try { return await call(withSchema, FALLBACK_MODEL) } catch { throw err }
@@ -139,7 +141,7 @@ export async function parseRuleText(text, context = {}, client = null) {
       return { ok: false, status: 502, message: `Gemini refused access (${reason}).` }
     }
     if (status === 404) {
-      return { ok: false, status: 502, message: `Gemini model "${MODEL}" was not found. Set GEMINI_MODEL to a current model.` }
+      return { ok: false, status: 502, message: `Gemini models "${MODEL}" and "${FALLBACK_MODEL}" were not found for this key. Set GEMINI_MODEL to a current model.` }
     }
     if (err?.name === 'AbortError' || /timed? ?out|aborted/i.test(reason)) {
       return { ok: false, status: 504, message: 'The LLM took too long to answer. Try again, or upload the rule as a CSV.' }
@@ -185,6 +187,7 @@ export function setRetryDelayForTests(ms) { RETRY_DELAY_MS = ms }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const isBusy = (err) => [500, 503].includes(err?.status) || /high demand|overloaded|unavailable/i.test(err?.message ?? '')
 const isQuota = (err) => err?.status === 429
+const isMissingModel = (err) => err?.status === 404
 
 function isKeyProblem(err) {
   return /api key|api_key_invalid|permission_denied.*key/i.test(err?.message ?? '')
