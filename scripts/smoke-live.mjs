@@ -22,7 +22,7 @@ const CHECKS = [
   ['sample', '15% off on Flipkart, up to ₹200', (r) => r.status === 'unsupported' || r.status === 'ambiguous'],
   ['sample', 'Give a discount for big orders', (r) => r.status === 'ambiguous' || r.status === 'unsupported'],
   ['sample', '10% off if cart value is more than Rs.5,000', (r) => r.status === 'ok' && r.rule.minCartValue === 5000],
-  ['sample', 'Add another 10% Flipkart discount', (r) => r.status === 'ok' && r.warnings.some((w) => w.includes('already has an offer'))],
+  ['sample', 'Add another 10% Flipkart discount', (r) => r.status === 'ok' && r.warnings.some((w) => w.includes('RULE-03'))],
   ['sample', 'Flipkart pe 100 rupaye off sab products par', (r) => r.status === 'ok' && r.rule.appliesTo === 'Flipkart' && r.rule.type === 'flat' && r.rule.value === 100],
 ]
 
