@@ -14,7 +14,7 @@ A customer-facing cart pricing engine: each item gets the offer that saves the c
 - **The LLM is measured, not trusted.** Latest live run: 29 of 29 answered cases correct and **0 unsafe acceptances** (12 cases hit the free-tier rate limit and are reported as not run). The eval covers casual wording, typos, ₹ amounts, Hinglish, and a "tricky" set, mostly conditions the engine can't represent, built to catch the dangerous failure: a condition the engine can't represent being quietly dropped ("15% off up to ₹200" becoming an uncapped 15%). Those now come back as "the engine can't apply this offer as written" instead of a wrong rule. The report counts **unsafe acceptances** separately from accuracy ([results](evals/results.md)).
 - **Incomplete orders aren't priced silently:** a PDF with bad rows is held for review ("Rows found 5 · readable 2 · could not be read 3"), and the current cart stays until someone confirms. Clean PDFs still load automatically.
 - **Found a second conflict in the brief:** its stacking order for ITEM-02 gives Rs.629, but its own "biggest saving" principle gives Rs.614 ([details](#where-id-do-it-differently)).
-- **Inputs adapt to the engine:** every input mode is one file in `src/inputs/` going through one validator. A fourth mode touches nothing in `engine/`. 59 tests run in CI.
+- **Inputs adapt to the engine:** every input mode is one file in `src/inputs/` going through one validator. A fourth mode touches nothing in `engine/`. 61 tests run in CI.
 
 ## Run locally
 
@@ -24,7 +24,7 @@ cp .env.example .env.local   # optional: add a free GEMINI_API_KEY to enable pla
 npm run dev                  # http://localhost:5173
 ```
 
-Everything except the plain-English rule box works without a key. `npm test` runs the test suite (59 tests). GitHub Actions runs the tests and the build on every push.
+Everything except the plain-English rule box works without a key. `npm test` runs the test suite (61 tests). GitHub Actions runs the tests and the build on every push.
 
 ## Try it
 
@@ -122,6 +122,7 @@ The brief invites pushing back on its design choices. These are the four I'd rai
 - "More than Rs.5,000" is read as a Rs.5,000 threshold with the same inclusive `≥` as RULE-04. Treating it as strictly greater would mean one cart rule using `>` and another using `≥`, which the customer can't see. The confirm card shows the threshold so the user can correct it.
 - **Conditions the engine can't represent are refused, not dropped.** This depends on the model spotting the condition, so it is measured by the eval rather than assumed. Caps, exclusions, brand + platform combinations, dates, quantities, single products, customer conditions and either/or offers come back as `status: "unsupported"`, shown as "The engine can't apply this offer as written". Turning "15% off up to ₹200" into an uncapped 15% is worse than invalid JSON, because it looks right.
 - **The public endpoint is protected.** The key is server-side, and the endpoint itself is limited: 8 requests a minute per client and 60 per instance (`server/rateLimit.js`, answers 429 with `Retry-After`), request bodies over 8 KB are refused, the name lists sent as context are capped, and the Gemini call times out after 15 seconds. The limiter lives in memory, so it's per serverless instance: enough to stop one script draining the free quota. Production would use a shared store or the host's firewall rules.
+- **Gemini's free tier is sometimes busy.** A "high demand" answer is retried once, and if the main model is busy or out of quota the call moves to a backup model (`gemini-2.5-flash-lite`, changeable with `GEMINI_FALLBACK_MODEL`), since free-tier quotas are per model. The answer still goes through the same validation.
 - Failures (no key configured, rate limit, timeout, refusal, truncated or non-JSON output, network down) each produce a plain message in the UI, which also points to the CSV upload as a way to keep adding rules. None of them crash the page or touch the active rules.
 
 **PDF cart**

@@ -37,7 +37,7 @@ export default defineConfig(({ mode }) => {
   // Make GEMINI_API_KEY from .env.local visible to the dev middleware (server side only;
   // it is not prefixed with VITE_ so it is never bundled into the browser code).
   const env = loadEnv(mode, process.cwd(), '')
-  for (const key of ['GEMINI_API_KEY', 'GEMINI_MODEL']) {
+  for (const key of ['GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_FALLBACK_MODEL']) {
     if (env[key] && !process.env[key]) process.env[key] = env[key]
   }
   return { plugins: [react(), parseRuleApi()] }

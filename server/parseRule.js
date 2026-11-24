@@ -15,6 +15,8 @@ import { createRateLimiter } from './rateLimit.js'
 
 // Override with GEMINI_MODEL if Google retires this model name.
 export const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+// Used when the main model is overloaded or out of free-tier quota (quotas are per model).
+export const FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash-lite'
 export const MAX_INPUT_CHARS = 500
 export const MAX_BODY_BYTES = 8_000
 const UPSTREAM_TIMEOUT_MS = 15_000
@@ -85,8 +87,8 @@ export async function parseRuleText(text, context = {}, client = null) {
     // Don't hold the function open if Gemini hangs.
     httpOptions: { timeout: UPSTREAM_TIMEOUT_MS },
   })
-  const request = (withSchema) => ai.models.generateContent({
-    model: MODEL,
+  const call = (withSchema, model) => ai.models.generateContent({
+    model,
     contents: `<rule_description>\n${input}\n</rule_description>`,
     config: {
       systemInstruction: systemPrompt(context),
@@ -96,6 +98,23 @@ export async function parseRuleText(text, context = {}, client = null) {
       maxOutputTokens: 2000,
     },
   })
+
+  // Gemini's free tier sometimes answers "high demand" (503) or runs out of
+  // per-minute quota (429). Retry a busy model once, then try the fallback model.
+  // If the fallback can't help either, report the original error.
+  const request = async (withSchema) => {
+    try {
+      return await call(withSchema, MODEL)
+    } catch (err) {
+      if (isBusy(err)) {
+        await sleep(RETRY_DELAY_MS)
+        try { return await call(withSchema, MODEL) } catch (again) { if (!isBusy(again) && !isQuota(again)) throw again }
+      } else if (!isQuota(err)) throw err
+      if (!FALLBACK_MODEL || FALLBACK_MODEL === MODEL) throw err
+      console.warn(`[parse-rule] ${MODEL} unavailable (${googleReason(err)}), trying ${FALLBACK_MODEL}`)
+      try { return await call(withSchema, FALLBACK_MODEL) } catch { throw err }
+    }
+  }
 
   let response
   try {
@@ -124,6 +143,9 @@ export async function parseRuleText(text, context = {}, client = null) {
     }
     if (err?.name === 'AbortError' || /timed? ?out|aborted/i.test(reason)) {
       return { ok: false, status: 504, message: 'The LLM took too long to answer. Try again, or upload the rule as a CSV.' }
+    }
+    if (isBusy(err)) {
+      return { ok: false, status: 503, message: "Google's Gemini servers are busy right now. Wait a few seconds and click Parse rule again." }
     }
     if (status === 429) {
       return { ok: false, status: 429, message: 'Too many requests to the LLM right now (free-tier limit). Try again in a minute.' }
@@ -157,6 +179,12 @@ function googleReason(err) {
     return raw.length > 300 ? `${raw.slice(0, 300)}…` : raw
   }
 }
+
+let RETRY_DELAY_MS = 1000
+export function setRetryDelayForTests(ms) { RETRY_DELAY_MS = ms }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const isBusy = (err) => [500, 503].includes(err?.status) || /high demand|overloaded|unavailable/i.test(err?.message ?? '')
+const isQuota = (err) => err?.status === 429
 
 function isKeyProblem(err) {
   return /api key|api_key_invalid|permission_denied.*key/i.test(err?.message ?? '')

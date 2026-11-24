@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { ApiError } from '@google/genai'
-import { parseRuleText, MODEL } from '../server/parseRule.js'
+import { parseRuleText, MODEL, FALLBACK_MODEL, setRetryDelayForTests } from '../server/parseRule.js'
 
 const fakeClient = (response, capture = {}) => ({
   models: { generateContent: async (params) => { capture.params = params; return response } },
@@ -50,6 +50,37 @@ describe('server parseRuleText', () => {
     } } }
     expect(await parseRuleText('10% off over Rs.5,000', {}, flaky)).toEqual({ ok: true, draft })
     expect(calls).toEqual([true, false])
+  })
+
+  it('retries a busy model, then falls back to the backup model', async () => {
+    setRetryDelayForTests(0)
+    const draft = { status: 'ok', scope: 'platform', applies_to: 'Noon', type: 'percentage', value: 5, stackable: false, min_cart_value: 0, clarification: '' }
+    const busy = () => new ApiError({ status: 503, message: '{"error":{"message":"This model is currently experiencing high demand."}}' })
+    const models = []
+    const client = { models: { generateContent: async (p) => {
+      models.push(p.model)
+      if (p.model === MODEL) throw busy()
+      return textResponse(draft)
+    } } }
+    expect(await parseRuleText('5% off on Noon', {}, client)).toEqual({ ok: true, draft })
+    expect(models).toEqual([MODEL, MODEL, FALLBACK_MODEL])
+
+    // Everything busy: a plain "try again" message, not a raw error.
+    const allBusy = { models: { generateContent: async () => { throw busy() } } }
+    const res = await parseRuleText('5% off on Noon', {}, allBusy)
+    expect(res).toMatchObject({ ok: false, status: 503 })
+    expect(res.message).toMatch(/busy right now/)
+  })
+
+  it('uses the backup model when the main one is out of quota', async () => {
+    const models = []
+    const client = { models: { generateContent: async (p) => {
+      models.push(p.model)
+      if (p.model === MODEL) throw new ApiError({ status: 429, message: 'quota' })
+      return textResponse({ status: 'ambiguous', clarification: 'x' })
+    } } }
+    expect((await parseRuleText('hi', {}, client)).ok).toBe(true)
+    expect(models).toEqual([MODEL, FALLBACK_MODEL])
   })
 
   it('handles invalid JSON from the model', async () => {
