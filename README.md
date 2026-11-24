@@ -55,6 +55,12 @@ tests/                     engine, adapters, and LLM handler tests
 
 The engine never knows where a rule or item came from. Every input mode goes through the same validators in `models.js`, so **a third input mode is a new file in `src/inputs/` and nothing in `engine/` changes**. The engine change for this assignment was additive: a `cart` scope, `minCartValue`, and `applyCartOffers()` run after the existing item logic.
 
+## How reliable is the LLM parsing?
+
+Three working examples don't show much, so `evals/rule-cases.json` holds 24 phrasings with the right answer for each: the brief's 4 examples, casual wording ("flat 100 rs off on flipkart stuff", "buy above 5k get 10% off"), ₹ amounts, typos in names, and inputs that *should* be refused (two rules in one sentence, no amount, "150% off", a prompt injection). `npm run eval` runs every case through the live parser and the same validation the UI uses, then writes the score to [`evals/results.md`](evals/results.md).
+
+_RESULTS_PENDING_
+
 ## Where I'd do it differently
 
 The brief invites pushing back on its design choices. These are the four I'd raise. The app follows the brief as written, so its numbers match the expected results.
