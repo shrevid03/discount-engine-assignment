@@ -70,23 +70,39 @@ export async function parseRuleText(text, context = {}, client = null) {
   }
 
   const ai = client ?? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+  const request = (withSchema) => ai.models.generateContent({
+    model: MODEL,
+    contents: `<rule_description>\n${input}\n</rule_description>`,
+    config: {
+      systemInstruction: systemPrompt(context),
+      responseMimeType: 'application/json',
+      ...(withSchema ? { responseJsonSchema: RULE_SCHEMA } : {}),
+      temperature: 0,
+      maxOutputTokens: 2000,
+    },
+  })
+
   let response
   try {
-    response = await ai.models.generateContent({
-      model: MODEL,
-      contents: `<rule_description>\n${input}\n</rule_description>`,
-      config: {
-        systemInstruction: systemPrompt(context),
-        responseMimeType: 'application/json',
-        responseJsonSchema: RULE_SCHEMA,
-        temperature: 0,
-        maxOutputTokens: 2000,
-      },
-    })
+    try {
+      response = await request(true)
+    } catch (err) {
+      // If the model rejects the schema itself (400 that isn't about the key), retry once in
+      // plain JSON mode. The prompt still describes every field, and the browser validates
+      // the result, so a malformed answer can't slip through.
+      if (!(err instanceof ApiError && err.status === 400) || isKeyProblem(err)) throw err
+      console.warn('[parse-rule] schema request rejected, retrying without schema:', googleReason(err))
+      response = await request(false)
+    }
   } catch (err) {
     const status = err instanceof ApiError ? err.status : undefined
-    if (status === 400 || status === 401 || status === 403) {
-      return { ok: false, status: 502, message: 'The Gemini API key was rejected. Check GEMINI_API_KEY.' }
+    const reason = googleReason(err)
+    console.error('[parse-rule] Gemini error', status, reason)
+    if (isKeyProblem(err) || status === 401) {
+      return { ok: false, status: 502, message: `The Gemini API key was rejected (${reason}). Check GEMINI_API_KEY in Vercel, then redeploy.` }
+    }
+    if (status === 403) {
+      return { ok: false, status: 502, message: `Gemini refused access (${reason}).` }
     }
     if (status === 404) {
       return { ok: false, status: 502, message: `Gemini model "${MODEL}" was not found. Set GEMINI_MODEL to a current model.` }
@@ -94,7 +110,7 @@ export async function parseRuleText(text, context = {}, client = null) {
     if (status === 429) {
       return { ok: false, status: 429, message: 'Too many requests to the LLM right now (free-tier limit). Try again in a minute.' }
     }
-    return { ok: false, status: 502, message: `The LLM request failed (${err?.message ?? 'unknown error'}).` }
+    return { ok: false, status: 502, message: `The LLM request failed (${reason}).` }
   }
 
   const candidate = response?.candidates?.[0]
@@ -110,6 +126,22 @@ export async function parseRuleText(text, context = {}, client = null) {
   } catch {
     return { ok: false, status: 502, message: 'The LLM returned something that is not valid JSON. Try again.' }
   }
+}
+
+/** Google's own error text, pulled out of the SDK's JSON-in-a-string error message. */
+function googleReason(err) {
+  const raw = err?.message ?? String(err)
+  const json = raw.slice(raw.indexOf('{'))
+  try {
+    const parsed = JSON.parse(json)
+    return parsed?.error?.message ?? raw
+  } catch {
+    return raw.length > 300 ? `${raw.slice(0, 300)}…` : raw
+  }
+}
+
+function isKeyProblem(err) {
+  return /api key|api_key_invalid|permission_denied.*key/i.test(err?.message ?? '')
 }
 
 /** Shared HTTP handler for Vercel and the Vite dev server. */

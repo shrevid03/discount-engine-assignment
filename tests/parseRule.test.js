@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { ApiError } from '@google/genai'
 import { parseRuleText, MODEL } from '../server/parseRule.js'
 
 const fakeClient = (response, capture = {}) => ({
@@ -31,10 +32,24 @@ describe('server parseRuleText', () => {
   })
 
   it('turns API errors into plain messages', async () => {
-    const { ApiError } = await import('@google/genai')
     const failing = (status) => ({ models: { generateContent: async () => { throw new ApiError({ message: 'x', status }) } } })
     expect((await parseRuleText('hi', {}, failing(429))).status).toBe(429)
-    expect((await parseRuleText('hi', {}, failing(403))).message).toMatch(/GEMINI_API_KEY/)
+    const badKey = { models: { generateContent: async () => { throw new ApiError({ status: 400, message: '{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}' }) } } }
+    const res = await parseRuleText('hi', {}, badKey)
+    expect(res.message).toMatch(/GEMINI_API_KEY/)
+    expect(res.message).toContain('API key not valid')
+  })
+
+  it('retries without the schema when Gemini rejects the schema', async () => {
+    const calls = []
+    const draft = { status: 'ok', scope: 'cart', applies_to: '', type: 'percentage', value: 10, stackable: false, min_cart_value: 5000, clarification: '' }
+    const flaky = { models: { generateContent: async (p) => {
+      calls.push(!!p.config.responseJsonSchema)
+      if (p.config.responseJsonSchema) throw new ApiError({ status: 400, message: '{"error":{"message":"Invalid JSON payload: unknown field additionalProperties"}}' })
+      return textResponse(draft)
+    } } }
+    expect(await parseRuleText('10% off over Rs.5,000', {}, flaky)).toEqual({ ok: true, draft })
+    expect(calls).toEqual([true, false])
   })
 
   it('handles invalid JSON from the model', async () => {

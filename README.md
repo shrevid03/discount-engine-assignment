@@ -14,7 +14,7 @@ cp .env.example .env.local   # optional: add a free GEMINI_API_KEY to enable pla
 npm run dev                  # http://localhost:5173
 ```
 
-Everything except the plain-English rule box works without a key. `npm test` runs the test suite (37 tests). GitHub Actions runs the tests and the build on every push.
+Everything except the plain-English rule box works without a key. `npm test` runs the test suite (38 tests). GitHub Actions runs the tests and the build on every push.
 
 ## Try it
 
