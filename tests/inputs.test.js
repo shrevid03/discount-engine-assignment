@@ -48,6 +48,26 @@ describe('PDF cart', () => {
     expect(errors[2]).toMatch(/^Row 4 skipped .*: missing Brand$/)
   })
 
+  // PDFs printed from a browser (HTML tables), not made by our own generator.
+  it.each([
+    ['chrome-bordered.pdf', 6],
+    ['chrome-rupee-symbol-total-row.pdf', 6], // "₹ 1,299", right-aligned prices, a Total row
+  ])('reads %s', async (file, count) => {
+    const { items, errors } = await pdf(`tests/fixtures/${file}`)
+    expect(errors).toEqual([])
+    expect(items).toHaveLength(count)
+    expect(items.map((i) => i.basePrice)).toEqual([1299, 849, 599, 2499, 449, 899])
+  })
+
+  it('joins product, brand and platform names that wrap onto several lines', async () => {
+    const { items, errors } = await pdf('tests/fixtures/chrome-wrapped-cells.pdf')
+    expect(errors).toEqual([])
+    expect(items[0]).toMatchObject({
+      product: 'Premium Handwoven Cotton Cushion Cover Set', brand: 'Natura Casa', platform: 'Amazon India', basePrice: 1299,
+    })
+    expect(items[1]).toMatchObject({ product: 'Wall Shelf', basePrice: 599 })
+  })
+
   it('falls back to splitting on wide gaps when a row is one text run', () => {
     const runs = [
       { str: 'Product   Brand   Platform   Base Price', x: 10, y: 700, page: 1 },

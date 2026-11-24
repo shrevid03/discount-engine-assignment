@@ -45,19 +45,63 @@ export function groupIntoLines(runs) {
   return lines
 }
 
-/** Finds where each header column starts. Returns null if this isn't the header line. */
-function headerColumns(line) {
-  const lower = line.text.toLowerCase()
-  if (!HEADERS.every((h) => lower.includes(h))) return null
-  const starts = []
-  for (const h of HEADERS) {
-    const first = h.split(' ')[0]
-    const run = line.runs.find((r) => r.str.trim().toLowerCase().startsWith(first))
-    if (!run) return { starts: null } // header is one merged run: use text splitting
-    starts.push(run.x)
+const HEADER_FRAGMENT = /^(base|price|base price|\(?(rs\.?|inr|₹)\)?)$/i
+const lineHeight = (line) => Math.max(...line.runs.map((r) => r.h || 10))
+const hasHeaderWords = (line) => ['product', 'brand', 'platform'].every((w) => line.text.toLowerCase().includes(w))
+const isHeaderFragment = (line) => line.runs.every((r) => !r.str.trim() || HEADER_FRAGMENT.test(r.str.trim()))
+
+/**
+ * Finds the header and where each column starts. In a narrow table the header
+ * itself can wrap ("Base" on one line, "Price" on the next), so lines right
+ * above or below that hold only header fragments are folded in.
+ * Returns { first, last, starts } (starts is null when positions are unusable) or null.
+ */
+function findHeader(lines) {
+  for (let i = 0; i < lines.length; i++) {
+    if (!hasHeaderWords(lines[i])) continue
+    const group = [i]
+    for (const j of [i - 1, i + 1]) {
+      const near = lines[j] && lines[j].page === lines[i].page &&
+        Math.abs(lines[j].y - lines[i].y) < 2 * lineHeight(lines[i])
+      if (near && isHeaderFragment(lines[j])) group.push(j)
+    }
+    const runs = group.flatMap((k) => lines[k].runs)
+    if (!/price/i.test(runs.map((r) => r.str).join(' '))) continue
+    const startOf = (re) => {
+      const xs = runs.filter((r) => re.test(r.str.trim().toLowerCase())).map((r) => r.x)
+      return xs.length ? Math.min(...xs) : null
+    }
+    let starts = [startOf(/^product/), startOf(/^brand/), startOf(/^platform/), startOf(/^(base|price)/)]
+    // One merged header run, or columns out of order: fall back to text splitting.
+    if (starts.some((x) => x === null) || !starts.every((x, k) => k === 0 || x > starts[k - 1])) starts = null
+    return { first: Math.min(...group), last: Math.max(...group), starts }
   }
-  const ascending = starts.every((x, i) => i === 0 || x > starts[i - 1])
-  return { starts: ascending ? starts : null }
+  return null
+}
+
+/**
+ * A product name that wraps inside its cell shows up as extra lines holding
+ * parts of some columns and no price. Fold each such line into the nearest
+ * priced row if it sits within a wrapped line's distance (1.6 line heights).
+ * Separate table rows sit further apart than that, so a row that is really
+ * missing its price stays its own row and is still reported, not merged.
+ */
+function foldWrappedLines(rows) {
+  const anchors = rows.filter((r) => r.cells[3])
+  const kept = []
+  for (const row of rows) {
+    if (row.cells[3] || !row.cells.some(Boolean)) { kept.push(row); continue }
+    const limit = 1.6 * lineHeight(row.line)
+    const anchor = anchors
+      .filter((a) => a.line.page === row.line.page && Math.abs(a.line.y - row.line.y) <= limit)
+      .sort((a, b) => Math.abs(a.line.y - row.line.y) - Math.abs(b.line.y - row.line.y))[0]
+    if (!anchor) { kept.push(row); continue }
+    const above = row.line.y > anchor.line.y
+    anchor.cells = anchor.cells.map((c, k) =>
+      !row.cells[k] ? c : above ? `${row.cells[k]} ${c}`.trim() : `${c} ${row.cells[k]}`.trim())
+    anchor.text = above ? `${row.line.text} ${anchor.text}` : `${anchor.text} ${row.line.text}`
+  }
+  return kept
 }
 
 function splitByPosition(line, starts) {
@@ -92,8 +136,8 @@ export function cartFromTextRuns(runs) {
     }
   }
 
-  const headerIdx = lines.findIndex((l) => headerColumns(l))
-  if (headerIdx === -1) {
+  const header = findHeader(lines)
+  if (!header) {
     return {
       items: [],
       errors: ['Could not find the table header. The PDF needs columns named Product, Brand, Platform and Base Price.'],
@@ -101,18 +145,20 @@ export function cartFromTextRuns(runs) {
     }
   }
 
-  const { starts } = headerColumns(lines[headerIdx])
-  const meta = { heading: lines.slice(0, headerIdx).map((l) => l.text).join(' · ') }
+  const { starts } = header
+  const meta = { heading: lines.slice(0, header.first).map((l) => l.text).join(' · ') }
   const items = []
   const errors = []
 
-  let rowNo = 0
-  lines.slice(headerIdx + 1).forEach((line) => {
-    if (isRule(line.text) || headerColumns(line)) return // separators, repeated headers on page 2+
-    if (isFooter(line.text)) return
-    rowNo += 1
+  let rows = lines
+    .slice(header.last + 1)
+    // separators, footers, and headers repeated on page 2+
+    .filter((l) => !isRule(l.text) && !isFooter(l.text) && !hasHeaderWords(l) && !isHeaderFragment(l))
+    .map((line) => ({ line, text: line.text, cells: starts ? splitByPosition(line, starts) : [] }))
+  if (starts) rows = foldWrappedLines(rows)
 
-    const positional = starts ? splitByPosition(line, starts) : []
+  rows.forEach(({ line, text, cells: positional }, i) => {
+    const rowNo = i + 1
     let cells = positional
     if (cells.filter(Boolean).length !== 4) cells = splitByText(line)
 
@@ -122,7 +168,7 @@ export function cartFromTextRuns(runs) {
         ? positional.map((c, k) => (c ? null : COLUMN_NAMES[k])).filter(Boolean)
         : []
       errors.push(
-        `Row ${rowNo} skipped ("${line.text}"): ` +
+        `Row ${rowNo} skipped ("${text}"): ` +
         (missing.length ? `missing ${missing.join(', ')}` : `expected 4 columns (Product, Brand, Platform, Base Price) but found ${cells.length}`)
       )
       return
@@ -132,7 +178,7 @@ export function cartFromTextRuns(runs) {
     const itemId = `ITEM-${String(items.length + 1).padStart(2, '0')}`
     const { item, errors: rowErrors } = validateCartItem({ itemId, product, brand, platform, basePrice })
     if (item) items.push(item)
-    else errors.push(`Row ${rowNo} skipped ("${line.text}"): ${rowErrors.join('; ')}`)
+    else errors.push(`Row ${rowNo} skipped ("${text}"): ${rowErrors.join('; ')}`)
   })
 
   if (items.length === 0 && errors.length === 0) {
@@ -150,7 +196,7 @@ export async function textRunsFromPdf(data, pdfjs) {
     const content = await page.getTextContent()
     for (const it of content.items) {
       if (!('str' in it)) continue
-      runs.push({ str: it.str, x: it.transform[4], y: it.transform[5], page: p })
+      runs.push({ str: it.str, x: it.transform[4], y: it.transform[5], h: Math.hypot(it.transform[2], it.transform[3]), page: p })
     }
   }
   return runs

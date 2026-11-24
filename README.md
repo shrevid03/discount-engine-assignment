@@ -14,7 +14,7 @@ cp .env.example .env.local   # optional: add a free GEMINI_API_KEY to enable pla
 npm run dev                  # http://localhost:5173
 ```
 
-Everything except the plain-English rule box works without a key. `npm test` runs the test suite (38 tests). GitHub Actions runs the tests and the build on every push.
+Everything except the plain-English rule box works without a key. `npm test` runs the test suite (41 tests). GitHub Actions runs the tests and the build on every push.
 
 ## Try it
 
@@ -73,7 +73,7 @@ The engine never knows where a rule or item came from. Every input mode goes thr
 - Failures (no key configured, rate limit, refusal, truncated or non-JSON output, network down) each produce a plain message in the UI. None of them crash the page or touch the active rules.
 
 **PDF cart**
-- Parsed in the browser with pdf.js, so no upload server is needed. Columns are found from where the header words (Product, Brand, Platform, Base Price) sit on the page, so names with spaces ("Cushion Cover", "Amazon India") don't get split. If a row is stored as one text run, it falls back to splitting on wide gaps, tabs or pipes.
+- Parsed in the browser with pdf.js, so no upload server is needed. Columns are found from where the header words (Product, Brand, Platform, Base Price) sit on the page, so names with spaces ("Cushion Cover", "Amazon India") don't get split. If a row is stored as one text run, it falls back to splitting on wide gaps, tabs or pipes. Names that wrap onto two or three lines inside a cell are joined back together, and `₹`/`Rs.` prices, right-aligned price columns and Total rows are handled. Besides the sample PDFs, the tests include PDFs printed from a browser (`tests/fixtures/`), so it's not only tuned to one generator.
 - **Malformed rows are skipped and listed by row with the reason** ("Row 2 skipped: missing Base Price", "Row 3 skipped: base price must be a positive rupee amount (got "Rs.TBD")"). The good rows still load. Dropping a whole order because one line is bad seemed worse for the customer than a partial cart with a clear warning.
 - If no row can be read (wrong file, scanned image, missing header), **the current cart is kept** and the user is told why, rather than replacing the cart with nothing.
 - Item IDs are generated (ITEM-01, ITEM-02, …) because the PDF format has none.
