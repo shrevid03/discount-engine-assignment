@@ -21,7 +21,7 @@ export const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
 export const FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-flash-latest'
 export const MAX_INPUT_CHARS = 500
 export const MAX_BODY_BYTES = 8_000
-const UPSTREAM_TIMEOUT_MS = 15_000
+const UPSTREAM_TIMEOUT_MS = 25_000
 const MAX_NAMES = 50
 const MAX_NAME_CHARS = 80
 
@@ -89,7 +89,20 @@ export async function parseRuleText(text, context = {}, client = null) {
     // Don't hold the function open if Gemini hangs.
     httpOptions: { timeout: UPSTREAM_TIMEOUT_MS },
   })
-  const call = (withSchema, model) => ai.models.generateContent({
+  // Newer models think before answering, which is slow and unnecessary for a
+  // one-line rule, so backup models are asked to keep thinking minimal. If a
+  // model rejects that setting, the same request is sent without it.
+  const call = async (withSchema, model) => {
+    if (model === MODEL) return send(withSchema, model, null)
+    const thinking = /gemini-[12]\./.test(model) ? { thinkingBudget: 0 } : { thinkingLevel: 'LOW' }
+    try {
+      return await send(withSchema, model, thinking)
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 400) || isKeyProblem(err)) throw err
+      return send(withSchema, model, null)
+    }
+  }
+  const send = (withSchema, model, thinkingConfig) => ai.models.generateContent({
     model,
     contents: `<rule_description>\n${input}\n</rule_description>`,
     config: {
@@ -98,6 +111,7 @@ export async function parseRuleText(text, context = {}, client = null) {
       ...(withSchema ? { responseJsonSchema: RULE_SCHEMA } : {}),
       temperature: 0,
       maxOutputTokens: 2000,
+      ...(thinkingConfig ? { thinkingConfig } : {}),
     },
   })
 
