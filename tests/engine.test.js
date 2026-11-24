@@ -160,4 +160,19 @@ describe('promotion safety: a discount that raises the price', () => {
     const weak = { ...rs1, scope: 'platform', appliesTo: 'Amazon India', type: 'percentage', value: 5 }
     expect(simulateRule(cart.data, rules.data, weak)).toMatchObject({ matched: 3, neverWins: true, after: 5339 })
   })
+
+  it('stays accurate with two cart offers when only the bigger one is lost', () => {
+    const cartRules = [
+      { ruleId: 'C-BIG', scope: 'cart', appliesTo: '', type: 'percentage', value: 10, stackable: false, minCartValue: 4000 },
+      { ruleId: 'C-SMALL', scope: 'cart', appliesTo: '', type: 'flat', value: 100, stackable: false, minCartValue: 2000 },
+    ]
+    const sim = simulateRule(thresholdCart, cartRules, rs1)
+    // Rs.4,000 - 400 = 3,600 before; after, 3,999 only meets the Rs.2,000 offer: 3,999 - 100 = 3,899
+    expect(sim).toMatchObject({ before: 3600, after: 3899, cartOfferBefore: 400, cartOfferAfter: 100, regression: true, cartOfferLost: false })
+    const live = calculateCheckout(thresholdCart, [...cartRules, rs1])
+    expect(live.cartOffer.appliedRules).toEqual(['C-SMALL'])
+    expect(findCartOfferConflict(live, [...cartRules, rs1])).toMatchObject({
+      ruleId: 'C-BIG', minCartValue: 4000, totalWithoutItemOffers: 3600, extraPaid: 299,
+    })
+  })
 })

@@ -24,7 +24,8 @@ export function describeRule(rule) {
     ...(rule.scope === 'cart' ? [] : [['Applies to', rule.appliesTo]]),
     ['Type', cap(rule.type)],
     ['Value', rule.type === 'percentage' ? `${rule.value}%` : formatRupees(rule.value)],
-    ...(rule.scope === 'cart' ? [['Min cart value', formatRupees(rule.minCartValue)]] : []),
+    // Spelled out so "more than Rs.5,000" read as "Rs.5,000 or more" is visible before confirming.
+    ...(rule.scope === 'cart' ? [['Applies when', `cart total is ${formatRupees(rule.minCartValue)} or more`]] : []),
     ['Stackable', rule.stackable ? 'Yes' : 'No'],
   ]
 }
@@ -177,8 +178,10 @@ function ImpactPreview({ impact }) {
         <div role="alert" style={{ background: '#fce8e8', border: '1px solid #c0392b', borderRadius: 4, padding: '6px 8px', marginBottom: 8, color: '#8a1a1a' }} data-testid="rule-regression">
           <div style={{ fontWeight: 700 }}>This discount makes the customer pay {formatRupees(-delta)} more</div>
           <div style={{ marginTop: 2 }}>
-            It lowers the cart from {formatRupees(impact.subtotalBefore)} to {formatRupees(impact.subtotalAfter)}, below the cart offer's threshold,
-            so the {formatRupees(impact.cartOfferBefore)} cart discount no longer applies. The brief's order (item offers first, then the cart offer) causes this.
+            It lowers the cart from {formatRupees(impact.subtotalBefore)} to {formatRupees(impact.subtotalAfter)}, below a cart offer's threshold,
+            so the cart discount {impact.cartOfferAfter > 0
+              ? `falls from ${formatRupees(impact.cartOfferBefore)} to ${formatRupees(impact.cartOfferAfter)}`
+              : `of ${formatRupees(impact.cartOfferBefore)} no longer applies`}. The brief's order (item offers first, then the cart offer) causes this.
             Review the promotion before adding it.
           </div>
         </div>
@@ -209,7 +212,9 @@ function ImpactPreview({ impact }) {
       )}
       <div style={{ color: '#555', marginTop: 4 }}>
         {impact.cartOfferBefore === 0 && impact.cartOfferAfter === 0 && 'No cart offer applies before or after.'}
-        {impact.cartOfferBefore > 0 && impact.cartOfferAfter > 0 && `Cart offer still applies (${formatRupees(impact.cartOfferAfter)} off).`}
+        {impact.cartOfferBefore > 0 && impact.cartOfferAfter > 0 && (impact.cartOfferAfter === impact.cartOfferBefore || impact.subtotalAfter === impact.subtotalBefore
+          ? `Cart offer still applies (${formatRupees(impact.cartOfferAfter)} off).`
+          : `Cart offer changes from ${formatRupees(impact.cartOfferBefore)} to ${formatRupees(impact.cartOfferAfter)} off.`)}
         {impact.cartOfferBefore === 0 && impact.cartOfferAfter > 0 && `Cart now qualifies for a cart offer (${formatRupees(impact.cartOfferAfter)} off).`}
         {impact.cartOfferLost && `Cart offer lost (was ${formatRupees(impact.cartOfferBefore)} off).`}
       </div>
