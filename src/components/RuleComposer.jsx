@@ -8,7 +8,7 @@
 
 import { useState } from 'react'
 import { parseRuleFromText } from '../inputs/naturalLanguageRule.js'
-import { formatRupees } from '../engine/discountEngine.js'
+import { formatRupees, calculateCheckout } from '../engine/discountEngine.js'
 
 const EXAMPLES = [
   '20% off for Natura Casa brand, stackable with other offers',
@@ -27,6 +27,15 @@ export function describeRule(rule) {
     ...(rule.scope === 'cart' ? [['Min cart value', formatRupees(rule.minCartValue)]] : []),
     ['Stackable', rule.stackable ? 'Yes' : 'No'],
   ]
+}
+
+/** What confirming would do to the current cart: shown before the user commits. */
+export function previewImpact(rule, rules, cartItems) {
+  if (!cartItems.length) return null
+  const before = calculateCheckout(cartItems, rules)
+  const after = calculateCheckout(cartItems, [...rules, rule])
+  const changed = after.items.filter((it, i) => it.finalPrice !== before.items[i].finalPrice).length
+  return { changed, before: before.total, after: after.total }
 }
 
 const box = (border, bg) => ({
@@ -127,6 +136,18 @@ export default function RuleComposer({ rules, cartItems, onAdd }) {
               ))}
             </tbody>
           </table>
+          {(() => {
+            const impact = previewImpact(result.rule, rules, cartItems)
+            if (!impact) return null
+            return (
+              <div style={{ marginTop: 8, color: '#131A48' }} data-testid="rule-impact">
+                Effect on the current cart: {impact.changed} item{impact.changed === 1 ? '' : 's'} change
+                {impact.before !== impact.after
+                  ? <> · total {formatRupees(impact.before)} → <b>{formatRupees(impact.after)}</b></>
+                  : ' · total unchanged'}
+              </div>
+            )
+          })()}
           {result.warnings.map((w) => (
             <div key={w} style={{ color: '#6b5000', marginTop: 6 }}>⚠ {w}</div>
           ))}

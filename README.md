@@ -14,7 +14,7 @@ cp .env.example .env.local   # optional: add a free GEMINI_API_KEY to enable pla
 npm run dev                  # http://localhost:5173
 ```
 
-Everything except the plain-English rule box works without a key. `npm test` runs the test suite (41 tests). GitHub Actions runs the tests and the build on every push.
+Everything except the plain-English rule box works without a key. `npm test` runs the test suite (42 tests). GitHub Actions runs the tests and the build on every push.
 
 ## Try it
 
@@ -54,6 +54,17 @@ tests/                     engine, adapters, and LLM handler tests
 ```
 
 The engine never knows where a rule or item came from. Every input mode goes through the same validators in `models.js`, so **a third input mode is a new file in `src/inputs/` and nothing in `engine/` changes**. The engine change for this assignment was additive: a `cart` scope, `minCartValue`, and `applyCartOffers()` run after the existing item logic.
+
+## Where I'd do it differently
+
+The brief invites pushing back on its design choices. These are the four I'd raise. The app follows the brief as written, so its numbers match the expected results.
+
+| The brief's choice | What I'd propose | Why |
+|---|---|---|
+| A stackable rule applies **after** the winning rule (ITEM-02: Rs.150 off, then 10% → Rs.629) | Apply percentage discounts before flat ones (10% off, then Rs.150 → Rs.614) | The brief's own principle is "always give the customer the biggest saving", and this order saves Rs.15 more on the same two offers. I kept the brief's order because it defines the expected results, but the two rules conflict, and someone should choose deliberately. |
+| Stackable rules always stack, with no limit | Add a per-item cap on total discount (for example 40%) | Every new stackable rule compounds. One plain-English rule ("20% off Natura Casa, stackable") takes ITEM-01 to 32% off. That's fine for a demo, but real campaigns need a margin floor that no combination of offers can break. |
+| Confirm every parsed rule | Keep it, and show its effect before confirming (built: "2 items change · total Rs.5,339 → Rs.5,026") | A field list says what the rule *is*; the impact line says what it *does*. A misread "Rs.100" as "100%" is obvious when the total collapses. |
+| Carts arrive as a PDF table | Use a structured export or an order-ID lookup. For outside PDFs, use LLM extraction followed by the same validation and confirm step | Parsing a rendered document depends on its layout. I handled the cases I could find (wrapped cells, ₹ prices, total rows, browser-printed PDFs), but the next layout will find a new edge. |
 
 ## Decisions and tradeoffs
 

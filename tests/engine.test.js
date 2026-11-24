@@ -87,3 +87,12 @@ describe('edge cases', () => {
     expect(calculateCheckout([cart.data[0]], [r]).items[0].finalPrice).toBe(1104)
   })
 })
+
+describe('rule impact preview (confirm step)', () => {
+  it('shows how many items change and the new total', async () => {
+    const { previewImpact } = await import('../src/components/RuleComposer.jsx')
+    const r5 = { ruleId: 'RULE-05', scope: 'brand', appliesTo: 'Natura Casa', type: 'percentage', value: 20, stackable: true, minCartValue: 0 }
+    expect(previewImpact(r5, rules.data, cart.data)).toEqual({ changed: 2, before: 5339, after: 5026 })
+    expect(previewImpact(r5, rules.data, [])).toBeNull()
+  })
+})
