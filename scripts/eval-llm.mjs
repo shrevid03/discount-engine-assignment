@@ -1,8 +1,12 @@
 /**
  * Runs the plain-English rule parser against evals/rule-cases.json and scores it.
  *
- *   node scripts/eval-llm.mjs                      # against the live deployment
- *   node scripts/eval-llm.mjs http://localhost:5173  # against `npm run dev` (needs GEMINI_API_KEY in .env.local)
+ *   npm run eval                                   # against the live deployment
+ *   npm run eval -- --retry-errors                 # re-run only cases that hit a rate limit last time
+ *   npm run eval -- http://localhost:5173          # against `npm run dev` (needs GEMINI_API_KEY in .env.local)
+ *
+ * Gemini's free tier allows only a few requests per minute, so cases are spaced
+ * out and rate-limited requests back off before retrying.
  *
  * Each case goes through the real path: /api/parse-rule (the LLM) and then
  * draftToRule (the same validation the UI uses). Writes evals/results.md.
@@ -10,7 +14,11 @@
 import fs from 'fs'
 import { draftToRule } from '../src/inputs/naturalLanguageRule.js'
 
-const BASE = (process.argv[2] || 'https://discount-engine-assignment-iota-nine.vercel.app').replace(/\/$/, '')
+const args = process.argv.slice(2)
+const RETRY_ERRORS = args.includes('--retry-errors')
+const BASE = (args.find((a) => !a.startsWith('--')) || 'https://discount-engine-assignment-iota-nine.vercel.app').replace(/\/$/, '')
+const RESULTS_JSON = new URL('../evals/results.json', import.meta.url)
+const previous = RETRY_ERRORS && fs.existsSync(RESULTS_JSON) ? JSON.parse(fs.readFileSync(RESULTS_JSON)) : {}
 const cases = JSON.parse(fs.readFileSync(new URL('../evals/rule-cases.json', import.meta.url)))
 
 // The sample rules and cart, so names like "amazon" can resolve to "Amazon India".
@@ -50,7 +58,10 @@ async function parse(text) {
       body: JSON.stringify({ text, context }),
     })
     const body = await res.json().catch(() => ({}))
-    if (res.status === 429) { await sleep(15000); continue } // free-tier rate limit
+    if (res.status === 429) { // free-tier rate limit: back off 30s, then 60s
+      if (attempt < 2) { console.log(`    rate limited, waiting ${30 * (attempt + 1)}s…`); await sleep(30000 * (attempt + 1)) }
+      continue
+    }
     if (!res.ok) return { status: 'error', message: body.error || `HTTP ${res.status}` }
     return draftToRule(body.draft, { rules: [], cartItems })
   }
@@ -60,13 +71,21 @@ async function parse(text) {
 const rows = []
 let passed = 0
 for (const c of cases) {
-  const res = await parse(c.text)
-  const wrong = score(c.expect, res)
+  const prior = previous[c.text]
+  let got, wrong
+  if (prior && !prior.got.startsWith('error')) {
+    ({ got, wrong } = prior) // kept from the last run
+  } else {
+    const res = await parse(c.text)
+    got = describe(res)
+    wrong = score(c.expect, res)
+    await sleep(Number(process.env.EVAL_DELAY_MS ?? 13000)) // stay under the free tier's requests-per-minute limit
+  }
   if (!wrong.length) passed++
-  rows.push({ ...c, got: describe(res), wrong })
-  console.log(`${wrong.length ? '✗' : '✓'} ${c.text}\n    ${describe(res)}${wrong.length ? `\n    ${wrong.join('; ')}` : ''}`)
-  await sleep(Number(process.env.EVAL_DELAY_MS ?? 7000)) // stay under the free tier's requests-per-minute limit
+  rows.push({ ...c, got, wrong })
+  console.log(`${wrong.length ? '✗' : '✓'} ${c.text}\n    ${got}${wrong.length ? `\n    ${wrong.join('; ')}` : ''}`)
 }
+fs.writeFileSync(RESULTS_JSON, JSON.stringify(Object.fromEntries(rows.map((r) => [r.text, { got: r.got, wrong: r.wrong }])), null, 2))
 
 const errors = rows.filter((r) => r.got.startsWith('error')).length
 const md = [
