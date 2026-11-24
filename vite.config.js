@@ -28,11 +28,11 @@ function parseRuleApi() {
 }
 
 export default defineConfig(({ mode }) => {
-  // Make ANTHROPIC_API_KEY from .env.local visible to the dev middleware (server side only;
+  // Make GEMINI_API_KEY from .env.local visible to the dev middleware (server side only;
   // it is not prefixed with VITE_ so it is never bundled into the browser code).
   const env = loadEnv(mode, process.cwd(), '')
-  if (env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
-    process.env.ANTHROPIC_API_KEY = env.ANTHROPIC_API_KEY
+  for (const key of ['GEMINI_API_KEY', 'GEMINI_MODEL']) {
+    if (env[key] && !process.env[key]) process.env[key] = env[key]
   }
   return { plugins: [react(), parseRuleApi()] }
 })

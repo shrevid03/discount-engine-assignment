@@ -8,11 +8,11 @@ A customer-facing cart pricing engine: each item gets the offer that saves the c
 
 ```bash
 npm install
-cp .env.example .env.local   # optional: add ANTHROPIC_API_KEY to enable plain-English rules
+cp .env.example .env.local   # optional: add a free GEMINI_API_KEY to enable plain-English rules
 npm run dev                  # http://localhost:5173
 ```
 
-Everything except the plain-English rule box works without a key. `npm test` runs the test suite (36 tests).
+Everything except the plain-English rule box works without a key. `npm test` runs the test suite (37 tests).
 
 ## Try it
 
@@ -46,7 +46,7 @@ src/
     pdfCart.js             PDF → cart (pdf.js, runs in the browser)
     naturalLanguageRule.js plain English → draft rule (calls /api/parse-rule, then validates)
   components/              UI only (RuleComposer, CartSummary, FileUploader, DataTable, ErrorBanner)
-server/parseRule.js        the LLM call (Claude, structured JSON output)
+server/parseRule.js        the LLM call (Gemini, JSON-schema output)
 api/parse-rule.js          Vercel function wrapping server/parseRule.js
 tests/                     engine, adapters, and LLM handler tests
 ```
@@ -62,7 +62,8 @@ The engine never knows where a rule or item came from. Every input mode goes thr
 
 **Plain-English rules (LLM)**
 - **The API key stays on the server.** A static deploy would have to ship the key to every visitor's browser, so the LLM call runs in a small serverless function (`/api/parse-rule`). The rest of the app is still static. This is the one place I added a backend, and the brief allows it.
-- The model is constrained to a JSON schema (structured outputs), and its answer is still treated as untrusted: the browser runs it through the same `validateRule()` the CSV uses. A response that claims to be fine but fails validation (no value, a 150% discount, unknown scope) is shown as "Need a bit more detail", never added.
+- **Gemini** (`gemini-2.5-flash`, changeable with `GEMINI_MODEL`) because it has a free API tier, which is enough for a prototype. The provider is isolated in `server/parseRule.js`; swapping LLMs touches only that file.
+- The model is constrained to a JSON schema (`responseJsonSchema`, temperature 0), and its answer is still treated as untrusted: the browser runs it through the same `validateRule()` the CSV uses. A response that claims to be fine but fails validation (no value, a 150% discount, unknown scope) is shown as "Need a bit more detail", never added.
 - Ambiguous input ("Give a discount for big orders") comes back as `status: "ambiguous"` with a one-line clarification telling the user what to add. The prompt tells the model never to invent a value, threshold or name.
 - The confirm card shows every parsed field and warns about rules that won't do anything (for example, a brand that isn't in the cart) or that duplicate an existing rule. **I kept the confirmation step**: one misread "Rs.100" as "100%" changes every price, so a human check before a rule goes live is worth one extra click.
 - Brand and platform names already loaded are sent as context, so "flipkart" or "natura casa" are stored with the exact spelling the matcher needs.
@@ -85,7 +86,7 @@ The engine never knows where a rule or item came from. Every input mode goes thr
 ## Deploying (Vercel)
 
 1. Import the repo in Vercel. It detects Vite (`npm run build`, output `dist/`) and the `api/` function automatically.
-2. Add `ANTHROPIC_API_KEY` under Project → Settings → Environment Variables.
+2. Add `GEMINI_API_KEY` (free from Google AI Studio) under Project → Settings → Environment Variables.
 3. Deploy, then put the URL at the top of this README.
 
 On a pure static host (Netlify drop, GitHub Pages) everything works except plain-English rules, which show "not configured on this deployment".

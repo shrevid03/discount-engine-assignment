@@ -3,16 +3,17 @@
  * into a draft DiscountRule.
  *
  * Runs on the server (a Vercel function in production, Vite middleware in dev)
- * so the Anthropic API key never reaches the browser.
+ * so the Gemini API key never reaches the browser.
  *
- * The model is constrained to a JSON schema with structured outputs, but its
- * answer is still treated as untrusted: the browser re-validates it with the
- * same validateRule() the CSV path uses before showing the confirm step.
+ * The model is constrained to a JSON schema, but its answer is still treated
+ * as untrusted: the browser re-validates it with the same validateRule() the
+ * CSV path uses before showing the confirm step.
  */
 
-import Anthropic from '@anthropic-ai/sdk'
+import { GoogleGenAI, ApiError } from '@google/genai'
 
-export const MODEL = 'claude-opus-5-5'
+// Override with GEMINI_MODEL if Google retires this model name.
+export const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
 export const MAX_INPUT_CHARS = 500
 
 const RULE_SCHEMA = {
@@ -60,45 +61,52 @@ export async function parseRuleText(text, context = {}, client = null) {
   if (input.length > MAX_INPUT_CHARS) {
     return { ok: false, status: 400, message: `Keep the description under ${MAX_INPUT_CHARS} characters.` }
   }
-  if (!client && !process.env.ANTHROPIC_API_KEY) {
+  if (!client && !process.env.GEMINI_API_KEY) {
     return {
       ok: false,
       status: 503,
-      message: 'Plain-English rules are not configured on this deployment (ANTHROPIC_API_KEY is not set).',
+      message: 'Plain-English rules are not configured on this deployment (GEMINI_API_KEY is not set).',
     }
   }
 
-  const anthropic = client ?? new Anthropic()
+  const ai = client ?? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
   let response
   try {
-    response = await anthropic.beta.messages.create({
+    response = await ai.models.generateContent({
       model: MODEL,
-      max_tokens: 2000,
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
-      output_config: { effort: 'low', format: { type: 'json_schema', schema: RULE_SCHEMA } },
-      system: systemPrompt(context),
-      messages: [{ role: 'user', content: `<rule_description>\n${input}\n</rule_description>` }],
+      contents: `<rule_description>\n${input}\n</rule_description>`,
+      config: {
+        systemInstruction: systemPrompt(context),
+        responseMimeType: 'application/json',
+        responseJsonSchema: RULE_SCHEMA,
+        temperature: 0,
+        maxOutputTokens: 2000,
+      },
     })
   } catch (err) {
-    if (err instanceof Anthropic.AuthenticationError) {
-      return { ok: false, status: 502, message: 'The LLM API key was rejected. Check ANTHROPIC_API_KEY.' }
+    const status = err instanceof ApiError ? err.status : undefined
+    if (status === 400 || status === 401 || status === 403) {
+      return { ok: false, status: 502, message: 'The Gemini API key was rejected. Check GEMINI_API_KEY.' }
     }
-    if (err instanceof Anthropic.RateLimitError) {
-      return { ok: false, status: 429, message: 'Too many requests to the LLM right now. Try again in a moment.' }
+    if (status === 404) {
+      return { ok: false, status: 502, message: `Gemini model "${MODEL}" was not found. Set GEMINI_MODEL to a current model.` }
+    }
+    if (status === 429) {
+      return { ok: false, status: 429, message: 'Too many requests to the LLM right now (free-tier limit). Try again in a minute.' }
     }
     return { ok: false, status: 502, message: `The LLM request failed (${err?.message ?? 'unknown error'}).` }
   }
 
-  if (response.stop_reason === 'refusal') {
+  const candidate = response?.candidates?.[0]
+  if (response?.promptFeedback?.blockReason || candidate?.finishReason === 'SAFETY') {
     return { ok: false, status: 422, message: 'The model declined to parse that text. Rephrase it as a discount rule.' }
   }
-  const textBlock = response.content.find((b) => b.type === 'text')
-  if (response.stop_reason === 'max_tokens' || !textBlock) {
+  const raw = response?.text
+  if (candidate?.finishReason === 'MAX_TOKENS' || !raw) {
     return { ok: false, status: 502, message: 'The LLM returned an incomplete answer. Try again.' }
   }
   try {
-    return { ok: true, draft: JSON.parse(textBlock.text) }
+    return { ok: true, draft: JSON.parse(raw) }
   } catch {
     return { ok: false, status: 502, message: 'The LLM returned something that is not valid JSON. Try again.' }
   }

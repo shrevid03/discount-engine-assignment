@@ -2,9 +2,10 @@ import { describe, it, expect } from 'vitest'
 import { parseRuleText, MODEL } from '../server/parseRule.js'
 
 const fakeClient = (response, capture = {}) => ({
-  beta: { messages: { create: async (params) => { capture.params = params; return response } } },
+  models: { generateContent: async (params) => { capture.params = params; return response } },
 })
-const textResponse = (obj, extra = {}) => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify(obj) }], ...extra })
+const resp = (text, finishReason = 'STOP', extra = {}) => ({ text, candidates: [{ finishReason }], ...extra })
+const textResponse = (obj) => resp(JSON.stringify(obj))
 
 describe('server parseRuleText', () => {
   it('sends a schema-constrained request and returns the draft', async () => {
@@ -13,8 +14,9 @@ describe('server parseRuleText', () => {
     const res = await parseRuleText('Rs.100 flat discount on all Flipkart items', { brands: [], platforms: ['Flipkart'] }, fakeClient(textResponse(draft), cap))
     expect(res).toEqual({ ok: true, draft })
     expect(cap.params.model).toBe(MODEL)
-    expect(cap.params.output_config.format.type).toBe('json_schema')
-    expect(cap.params.system).toContain('Known platforms: Flipkart')
+    expect(cap.params.config.responseMimeType).toBe('application/json')
+    expect(cap.params.config.responseJsonSchema.required).toContain('status')
+    expect(cap.params.config.systemInstruction).toContain('Known platforms: Flipkart')
   })
 
   it('rejects empty and over-long input before calling the LLM', async () => {
@@ -23,20 +25,28 @@ describe('server parseRuleText', () => {
   })
 
   it('handles refusals and truncated output', async () => {
-    expect((await parseRuleText('hi', {}, fakeClient({ stop_reason: 'refusal', content: [] }))).ok).toBe(false)
-    expect((await parseRuleText('hi', {}, fakeClient({ stop_reason: 'max_tokens', content: [{ type: 'text', text: '{"sta' }] }))).ok).toBe(false)
+    expect((await parseRuleText('hi', {}, fakeClient(resp(undefined, 'SAFETY')))).status).toBe(422)
+    expect((await parseRuleText('hi', {}, fakeClient({ promptFeedback: { blockReason: 'OTHER' } }))).status).toBe(422)
+    expect((await parseRuleText('hi', {}, fakeClient(resp('{"sta', 'MAX_TOKENS')))).ok).toBe(false)
+  })
+
+  it('turns API errors into plain messages', async () => {
+    const { ApiError } = await import('@google/genai')
+    const failing = (status) => ({ models: { generateContent: async () => { throw new ApiError({ message: 'x', status }) } } })
+    expect((await parseRuleText('hi', {}, failing(429))).status).toBe(429)
+    expect((await parseRuleText('hi', {}, failing(403))).message).toMatch(/GEMINI_API_KEY/)
   })
 
   it('handles invalid JSON from the model', async () => {
-    const res = await parseRuleText('hi', {}, fakeClient({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'not json' }] }))
+    const res = await parseRuleText('hi', {}, fakeClient(resp('not json')))
     expect(res).toMatchObject({ ok: false, status: 502 })
   })
 
   it('explains a missing API key instead of crashing', async () => {
-    const saved = process.env.ANTHROPIC_API_KEY
-    delete process.env.ANTHROPIC_API_KEY
+    const saved = process.env.GEMINI_API_KEY
+    delete process.env.GEMINI_API_KEY
     const res = await parseRuleText('20% off Natura Casa')
-    if (saved) process.env.ANTHROPIC_API_KEY = saved
+    if (saved) process.env.GEMINI_API_KEY = saved
     expect(res).toMatchObject({ ok: false, status: 503 })
   })
 })
