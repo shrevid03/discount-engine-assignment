@@ -59,7 +59,7 @@ The engine never knows where a rule or item came from. Every input mode goes thr
 
 Three working examples don't show much, so `evals/rule-cases.json` holds 24 phrasings with the right answer for each: the brief's 4 examples, casual wording ("flat 100 rs off on flipkart stuff", "buy above 5k get 10% off"), ₹ amounts, typos in names, and inputs that *should* be refused (two rules in one sentence, no amount, "150% off", a prompt injection). `npm run eval` runs every case through the live parser and the same validation the UI uses, then writes the score to [`evals/results.md`](evals/results.md).
 
-**Latest run: 20 of 20 answered cases correct**, including typos ("flipkrt"), shorthand ("5k", "rs"), ₹ amounts, and correctly refusing two-rules-at-once, missing amounts and a prompt injection. Four cases hit Gemini's free-tier rate limit and weren't scored. `npm run eval -- --retry-errors` re-runs only those.
+**Latest run: 23 of 23 answered cases correct** (1 case hit Gemini's free-tier rate limit), including typos ("flipkrt", "natura casaa"), shorthand ("5k", "rs"), ₹ amounts, and correctly refusing two rules at once, missing amounts, "150% off" and a prompt injection.
 
 ## Where I'd do it differently
 
