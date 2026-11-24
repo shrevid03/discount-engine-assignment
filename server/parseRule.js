@@ -112,9 +112,18 @@ export async function parseRuleText(text, context = {}, client = null) {
         await sleep(RETRY_DELAY_MS)
         try { return await call(withSchema, MODEL) } catch (again) { if (!isBusy(again) && !isQuota(again)) throw again }
       } else if (!isQuota(err) && !isMissingModel(err)) throw err
-      if (!FALLBACK_MODEL || FALLBACK_MODEL === MODEL) throw err
-      console.warn(`[parse-rule] ${MODEL} unavailable (${googleReason(err)}), trying ${FALLBACK_MODEL}`)
-      try { return await call(withSchema, FALLBACK_MODEL) } catch { throw err }
+      if (FALLBACK_MODEL && FALLBACK_MODEL !== MODEL) {
+        console.warn(`[parse-rule] ${MODEL} unavailable (${googleReason(err)}), trying ${FALLBACK_MODEL}`)
+        try { return await call(withSchema, FALLBACK_MODEL) } catch (fallbackErr) {
+          if (!isMissingModel(err) && !isMissingModel(fallbackErr)) throw err
+        }
+      }
+      // Neither name exists for this key (Google renames models and new projects don't
+      // get older versions): ask Google which Flash model this key can use.
+      const found = await discoverFlashModel(ai)
+      if (!found || found === MODEL || found === FALLBACK_MODEL) throw err
+      console.warn(`[parse-rule] using discovered model ${found}`)
+      return await call(withSchema, found)
     }
   }
 
@@ -141,7 +150,7 @@ export async function parseRuleText(text, context = {}, client = null) {
       return { ok: false, status: 502, message: `Gemini refused access (${reason}).` }
     }
     if (status === 404) {
-      return { ok: false, status: 502, message: `Gemini models "${MODEL}" and "${FALLBACK_MODEL}" were not found for this key. Set GEMINI_MODEL to a current model.` }
+      return { ok: false, status: 502, message: `No usable Gemini model was found for this key (${reason}). Set GEMINI_MODEL in Vercel to a model listed in Google AI Studio.` }
     }
     if (err?.name === 'AbortError' || /timed? ?out|aborted/i.test(reason)) {
       return { ok: false, status: 504, message: 'The LLM took too long to answer. Try again, or upload the rule as a CSV.' }
@@ -180,6 +189,34 @@ function googleReason(err) {
   } catch {
     return raw.length > 300 ? `${raw.slice(0, 300)}…` : raw
   }
+}
+
+let discovered = null
+/**
+ * Picks a current text Flash model this key can call: generateContent support,
+ * "flash" in the name, no lite/image/audio/live/embedding variants, stable
+ * releases before previews, newest version first. Cached per instance.
+ */
+export async function discoverFlashModel(ai) {
+  if (discovered) return discovered
+  try {
+    const names = []
+    const pager = await ai.models.list({ config: { pageSize: 100, queryBase: true } })
+    for await (const m of pager) {
+      const name = String(m.name ?? '').replace(/^models\//, '')
+      const actions = m.supportedActions ?? []
+      if (actions.length && !actions.includes('generateContent')) continue
+      if (!/flash/i.test(name) || /lite|image|tts|audio|live|embed|thinking|exp/i.test(name)) continue
+      names.push(name)
+      if (names.length > 200) break
+    }
+    const version = (n) => parseFloat((n.match(/(\d+(\.\d+)?)/) ?? [])[1] ?? '0')
+    names.sort((a, b) => (/preview/.test(a) - /preview/.test(b)) || version(b) - version(a) || a.length - b.length)
+    discovered = names[0] ?? null
+  } catch (e) {
+    console.error('[parse-rule] could not list models:', googleReason(e))
+  }
+  return discovered
 }
 
 let RETRY_DELAY_MS = 1000

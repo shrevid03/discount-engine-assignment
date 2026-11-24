@@ -94,6 +94,27 @@ describe('server parseRuleText', () => {
     expect(models).toEqual([MODEL, FALLBACK_MODEL])
   })
 
+  it('asks Google for a current Flash model when neither configured name exists', async () => {
+    const used = []
+    const models = [
+      { name: 'models/gemini-9.0-flash-image', supportedActions: ['generateContent'] },
+      { name: 'models/gemini-9.0-flash-preview-05', supportedActions: ['generateContent'] },
+      { name: 'models/gemini-8.5-flash', supportedActions: ['generateContent'] },
+      { name: 'models/gemini-9.0-flash', supportedActions: ['generateContent'] },
+      { name: 'models/text-embedding-9', supportedActions: ['embedContent'] },
+    ]
+    const client = { models: {
+      list: async () => (async function* () { yield* models })(),
+      generateContent: async (p) => {
+        used.push(p.model)
+        if (p.model !== 'gemini-9.0-flash') throw new ApiError({ status: 404, message: 'not found' })
+        return textResponse({ status: 'ambiguous', clarification: 'x' })
+      },
+    } }
+    expect((await parseRuleText('hi', {}, client)).ok).toBe(true)
+    expect(used).toEqual([MODEL, FALLBACK_MODEL, 'gemini-9.0-flash'])
+  })
+
   it('handles invalid JSON from the model', async () => {
     const res = await parseRuleText('hi', {}, fakeClient(resp('not json')))
     expect(res).toMatchObject({ ok: false, status: 502 })
