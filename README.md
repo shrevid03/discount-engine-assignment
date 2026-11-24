@@ -4,7 +4,7 @@
 
 A customer-facing cart pricing engine: each item gets the offer that saves the customer the most, stackable offers go on top, and a cart-level offer applies to the total once it crosses a threshold. Rules can come from a CSV or from plain English (parsed by an LLM, with a confirm step). Carts can come from a CSV or a PDF.
 
-**Live app:** _LIVE_URL_ (add after deploying)
+**Live app:** https://discount-engine-assignment-iota-nine.vercel.app
 
 ## Run locally
 
@@ -89,6 +89,6 @@ The engine never knows where a rule or item came from. Every input mode goes thr
 
 1. Import the repo in Vercel. It detects Vite (`npm run build`, output `dist/`) and the `api/` function automatically.
 2. Add `GEMINI_API_KEY` (free from Google AI Studio) under Project → Settings → Environment Variables.
-3. Deploy, then put the URL at the top of this README.
+3. Deploy. This project is live at https://discount-engine-assignment-iota-nine.vercel.app
 
 On a pure static host (Netlify drop, GitHub Pages) everything works except plain-English rules, which show "not configured on this deployment".
