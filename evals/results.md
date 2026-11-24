@@ -4,6 +4,8 @@
 
 Each phrase goes through the real path: the Gemini call, then the same validation the UI uses. "Refuse" cases pass only if no rule is produced (the model asks for detail or says the engine can't apply the condition). An **unsafe acceptance** is a refuse case that produced a rule anyway, for example "15% off up to Rs.200" becoming an uncapped 15%. That is the failure that matters most, so it is counted on its own.
 
+Note on this run: 12 cases hit Gemini's free-tier rate limit and are marked "not run" (untested, not passed). Latency in this run includes the script's rate-limit back-off waits (hence the 96.8s slowest); the script now times only the final request.
+
 | Category | Completed | Exact field match | Correct refusals | Unsafe acceptances | Median latency | Slowest |
 |---|---|---|---|---|---|---|
 | core | 22/24 | 15/15 | 7/7 | 0 | 2.7s | 3.7s |

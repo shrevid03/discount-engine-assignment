@@ -66,14 +66,18 @@ function score(expect, res) {
   return wrong
 }
 
+let lastRequestMs = null // time of the final request only, so rate-limit back-off doesn't count as latency
+
 async function parse(text) {
   for (let attempt = 0; attempt < 3; attempt++) {
+    const t0 = Date.now()
     const res = await fetch(`${BASE}/api/parse-rule`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, context }),
     })
     const body = await res.json().catch(() => ({}))
+    lastRequestMs = Date.now() - t0
     if (res.status === 429) { // free-tier rate limit: back off 30s, then 60s
       if (attempt < 2) { console.log(`    rate limited, waiting ${30 * (attempt + 1)}s…`); await sleep(30000 * (attempt + 1)) }
       continue
@@ -91,9 +95,8 @@ for (const c of cases) {
   if (prior && !prior.got.startsWith('error')) {
     ({ got, wrong, status, ms } = prior) // kept from the last run
   } else {
-    const t0 = Date.now()
     const res = await parse(c.text)
-    ms = Date.now() - t0
+    ms = lastRequestMs
     status = res.status
     got = describe(res)
     wrong = score(c.expect, res)
