@@ -6,6 +6,14 @@ A customer-facing cart pricing engine: each item gets the offer that saves the c
 
 **Live app:** https://discount-engine-assignment-iota-nine.vercel.app
 
+## Highlights
+
+- **Matches the brief exactly:** Rs.5,932 → Rs.5,339, with the cart offer on its own row. ITEM-04 says *why* there's no offer.
+- **Found a conflict in the brief:** its stacking order for ITEM-02 gives Rs.629, but its own "biggest saving" principle gives Rs.614. The app matches the expected numbers and flags the conflict ([details](#where-id-do-it-differently)).
+- **The LLM is measured, not trusted:** a 24-case eval of slang, typos, ₹ amounts, two-rules-at-once and a prompt injection scored **23/23 answered correctly** ([results](evals/results.md)). Every answer is validated, and the confirm card shows the rule's effect ("2 items change · Rs.5,339 → Rs.5,026") before it goes live.
+- **PDF upload works on PDFs I didn't make:** browser-printed tables, wrapped cells, ₹ prices and Total rows. Bad rows are skipped with a reason, and the good ones still load.
+- **Inputs adapt to the engine:** every input mode is one file in `src/inputs/` going through one validator. A fourth mode touches nothing in `engine/`. 42 tests run in CI.
+
 ## Run locally
 
 ```bash
