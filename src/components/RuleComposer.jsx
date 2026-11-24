@@ -6,9 +6,9 @@
  * and the confirmed rule is handed to the parent with onAdd(rule).
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { parseRuleFromText } from '../inputs/naturalLanguageRule.js'
-import { formatRupees, calculateCheckout } from '../engine/discountEngine.js'
+import { formatRupees, simulateRule } from '../engine/discountEngine.js'
 
 const EXAMPLES = [
   '20% off for Natura Casa brand, stackable with other offers',
@@ -29,14 +29,8 @@ export function describeRule(rule) {
   ]
 }
 
-/** What confirming would do to the current cart: shown before the user commits. */
-export function previewImpact(rule, rules, cartItems) {
-  if (!cartItems.length) return null
-  const before = calculateCheckout(cartItems, rules)
-  const after = calculateCheckout(cartItems, [...rules, rule])
-  const changed = after.items.filter((it, i) => it.finalPrice !== before.items[i].finalPrice).length
-  return { changed, before: before.total, after: after.total }
-}
+/** Effective discounts above this get a warning: a margin floor nobody set on purpose. */
+const HIGH_DISCOUNT = 40
 
 const box = (border, bg) => ({
   border: `1px solid ${border}`, borderLeft: `3px solid ${border}`, background: bg,
@@ -51,10 +45,16 @@ const btn = (primary, disabled) => ({
   cursor: disabled ? 'not-allowed' : 'pointer', letterSpacing: '0.03em',
 })
 
-export default function RuleComposer({ rules, cartItems, onAdd }) {
+export default function RuleComposer({ rules, cartItems, onAdd, preset }) {
   const [text, setText] = useState('')
   const [pending, setPending] = useState(false)
   const [result, setResult] = useState(null) // { status, rule?, warnings?, message? }
+
+  // A scenario button can drop text into the box. Parsing stays a separate click,
+  // so whoever is watching sees the real model call happen.
+  useEffect(() => {
+    if (preset) { setText(preset.text); setResult(null) }
+  }, [preset])
 
   async function handleParse(e) {
     e?.preventDefault()
@@ -71,6 +71,8 @@ export default function RuleComposer({ rules, cartItems, onAdd }) {
     setResult(null)
     setText('')
   }
+
+  const impact = result?.status === 'ok' ? simulateRule(cartItems, rules, result.rule) : null
 
   return (
     <div style={{ marginTop: '1rem', paddingTop: '0.9rem', borderTop: '1px solid #eee' }}>
@@ -114,15 +116,26 @@ export default function RuleComposer({ rules, cartItems, onAdd }) {
         </div>
       )}
 
+      {result?.status === 'unsupported' && (
+        <div role="alert" style={box('#d4a017', '#fff8e1')} data-testid="rule-unsupported">
+          <div style={{ fontWeight: 700, color: '#6b5000', marginBottom: 2 }}>The engine can't apply this offer as written</div>
+          <div style={{ color: '#5a4300' }}>{result.message}</div>
+          <div style={{ color: '#5a4300', marginTop: 4 }}>
+            It wasn't turned into a simpler rule, because dropping the condition would charge customers the wrong price.
+          </div>
+        </div>
+      )}
+
       {result?.status === 'error' && (
         <div role="alert" style={box('#c0392b', '#fce8e8')}>
           <div style={{ fontWeight: 700, color: '#8a1a1a', marginBottom: 2 }}>Couldn't parse the rule</div>
           <div style={{ color: '#5a1010' }}>{result.message}</div>
+          <div style={{ color: '#5a1010', marginTop: 4 }}>You can still add rules by uploading a rules CSV above.</div>
         </div>
       )}
 
       {result?.status === 'ok' && (
-        <div style={box('#131A48', '#f4f5fb')} data-testid="rule-confirm">
+        <div style={box(impact?.regression ? '#c0392b' : '#131A48', impact?.regression ? '#fff5f5' : '#f4f5fb')} data-testid="rule-confirm">
           <div style={{ fontWeight: 700, color: '#131A48', marginBottom: 6 }}>
             Check this rule before adding it as {result.rule.ruleId}
           </div>
@@ -136,27 +149,85 @@ export default function RuleComposer({ rules, cartItems, onAdd }) {
               ))}
             </tbody>
           </table>
-          {(() => {
-            const impact = previewImpact(result.rule, rules, cartItems)
-            if (!impact) return null
-            return (
-              <div style={{ marginTop: 8, color: '#131A48' }} data-testid="rule-impact">
-                Effect on the current cart: {impact.changed} item{impact.changed === 1 ? '' : 's'} change
-                {impact.before !== impact.after
-                  ? <> · total {formatRupees(impact.before)} → <b>{formatRupees(impact.after)}</b></>
-                  : ' · total unchanged'}
-              </div>
-            )
-          })()}
+
+          {impact && <ImpactPreview impact={impact} />}
+
           {result.warnings.map((w) => (
             <div key={w} style={{ color: '#6b5000', marginTop: 6 }}>⚠ {w}</div>
           ))}
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <button type="button" style={btn(true)} onClick={confirm}>Confirm &amp; add</button>
+            <button type="button" style={btn(true)} onClick={confirm}>
+              {impact?.regression ? 'Add anyway' : 'Confirm & add'}
+            </button>
             <button type="button" style={btn(false)} onClick={() => setResult(null)}>Discard</button>
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/** Campaign impact: what this rule does to the current cart, from the real engine. */
+function ImpactPreview({ impact }) {
+  const delta = impact.before - impact.after
+  const cell = { padding: '2px 10px 2px 0', whiteSpace: 'nowrap' }
+  return (
+    <div style={{ marginTop: 10, borderTop: '1px solid #dde', paddingTop: 8 }} data-testid="rule-impact">
+      {impact.regression && (
+        <div role="alert" style={{ background: '#fce8e8', border: '1px solid #c0392b', borderRadius: 4, padding: '6px 8px', marginBottom: 8, color: '#8a1a1a' }} data-testid="rule-regression">
+          <div style={{ fontWeight: 700 }}>This discount makes the customer pay {formatRupees(-delta)} more</div>
+          <div style={{ marginTop: 2 }}>
+            It lowers the cart from {formatRupees(impact.subtotalBefore)} to {formatRupees(impact.subtotalAfter)}, below the cart offer's threshold,
+            so the {formatRupees(impact.cartOfferBefore)} cart discount no longer applies. The brief's order (item offers first, then the cart offer) causes this.
+            Review the promotion before adding it.
+          </div>
+        </div>
+      )}
+      <div style={{ fontWeight: 700, color: '#131A48', marginBottom: 4 }}>Effect on the current cart</div>
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginBottom: 6 }}>
+        <Stat label="Checkout now" value={formatRupees(impact.before)} />
+        <Stat label="After this rule" value={formatRupees(impact.after)} strong />
+        <Stat
+          label={delta >= 0 ? 'Extra customer savings' : 'Customer pays more'}
+          value={formatRupees(Math.abs(delta))}
+          color={delta > 0 ? '#1e5c2c' : delta < 0 ? '#8a1a1a' : '#555'}
+        />
+        <Stat label="Items affected" value={`${impact.changes.length} of ${impact.itemCount}`} />
+      </div>
+      {impact.changes.length > 0 && (
+        <table style={{ fontSize: 12, borderCollapse: 'collapse' }}>
+          <tbody>
+            {impact.changes.map((c) => (
+              <tr key={c.itemId}>
+                <td style={{ ...cell, color: '#131A48' }}>{c.product}</td>
+                <td style={{ ...cell, color: '#666' }}>{formatRupees(c.before)} → <b style={{ color: '#131A48' }}>{formatRupees(c.after)}</b></td>
+                <td style={{ ...cell, color: '#1e5c2c' }}>−{formatRupees(c.before - c.after)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <div style={{ color: '#555', marginTop: 4 }}>
+        {impact.cartOfferBefore === 0 && impact.cartOfferAfter === 0 && 'No cart offer applies before or after.'}
+        {impact.cartOfferBefore > 0 && impact.cartOfferAfter > 0 && `Cart offer still applies (${formatRupees(impact.cartOfferAfter)} off).`}
+        {impact.cartOfferBefore === 0 && impact.cartOfferAfter > 0 && `Cart now qualifies for a cart offer (${formatRupees(impact.cartOfferAfter)} off).`}
+        {impact.cartOfferLost && `Cart offer lost (was ${formatRupees(impact.cartOfferBefore)} off).`}
+      </div>
+      {impact.neverWins && (
+        <div style={{ color: '#6b5000', marginTop: 6 }}>⚠ This rule matches {impact.matched} item{impact.matched === 1 ? '' : 's'} but an existing offer beats it on every one, so it changes nothing today.</div>
+      )}
+      {impact.maxEffectiveDiscount > HIGH_DISCOUNT && (
+        <div style={{ color: '#6b5000', marginTop: 6 }}>⚠ With this rule one item would be {impact.maxEffectiveDiscount}% off its base price. Check that the margin allows it.</div>
+      )}
+    </div>
+  )
+}
+
+function Stat({ label, value, strong, color = '#131A48' }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10, color: '#777', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</div>
+      <div style={{ fontSize: strong ? 15 : 13, fontWeight: 700, color }}>{value}</div>
     </div>
   )
 }

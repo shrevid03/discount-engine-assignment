@@ -25,6 +25,8 @@
 
 export const SCOPES = ['brand', 'platform', 'cart']
 export const TYPES = ['percentage', 'flat']
+/** Upper bound for any rupee amount (Rs.1 crore): keeps arithmetic far from float trouble. */
+export const MAX_RUPEES = 10_000_000
 
 const str = (v) => (v === undefined || v === null ? '' : String(v).trim())
 
@@ -70,13 +72,21 @@ export function validateRule(raw) {
   if (!Number.isFinite(value) || value <= 0) {
     errors.push(`value must be a positive number (got "${str(raw.value) || 'nothing'}")`)
   } else if (type === 'percentage' && value >= 100) {
+    // Policy choice: a 100% "discount" is a free item, which is a different
+    // business decision from a promotion, so it isn't accepted as a rule.
     errors.push(`a percentage discount must be below 100% (got ${value}%)`)
+  } else if (value > MAX_RUPEES) {
+    errors.push(`value is too large (got ${value})`)
   }
   if (stackable === null) errors.push(`stackable must be true or false (got "${str(raw.stackable)}")`)
 
   if (scope === 'cart') {
     appliesTo = ''
-    if (!Number.isFinite(minCartValue) || minCartValue < 0) {
+    // A blank threshold must not quietly become "every cart qualifies". A cart
+    // offer for every cart is allowed, but only when someone writes 0 on purpose.
+    if (str(minRaw) === '') {
+      errors.push('min_cart_value is missing (a cart offer needs a minimum cart value; write 0 to apply it to every cart)')
+    } else if (!Number.isFinite(minCartValue) || minCartValue < 0) {
       errors.push(`min_cart_value must be a rupee amount (got "${str(minRaw)}")`)
     }
   } else if (SCOPES.includes(scope)) {
@@ -110,6 +120,8 @@ export function validateCartItem(raw) {
   if (missing.length) errors.push(`missing ${missing.join(', ')}`)
   else if (!Number.isFinite(basePrice) || basePrice <= 0) {
     errors.push(`base price must be a positive rupee amount (got "${str(priceRaw)}")`)
+  } else if (basePrice > MAX_RUPEES) {
+    errors.push(`base price is too large (got "${str(priceRaw)}")`)
   }
 
   if (errors.length) return { item: null, errors }

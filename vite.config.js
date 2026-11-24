@@ -11,12 +11,18 @@ function parseRuleApi() {
       return res.end(JSON.stringify({ error: 'Use POST' }))
     }
     let raw = ''
-    for await (const chunk of req) raw += chunk
+    for await (const chunk of req) {
+      raw += chunk
+      if (raw.length > 64_000) break // the handler rejects anything over its limit anyway
+    }
     let body = {}
     try { body = JSON.parse(raw || '{}') } catch { /* handled as empty */ }
     const { handleParseRuleRequest } = await import('./server/parseRule.js')
-    const { status, json } = await handleParseRuleRequest(body)
+    const { status, json, headers } = await handleParseRuleRequest(body, {
+      clientId: req.socket?.remoteAddress, bodyBytes: Buffer.byteLength(raw),
+    })
     res.statusCode = status
+    for (const [k, v] of Object.entries(headers ?? {})) res.setHeader(k, v)
     res.setHeader('Content-Type', 'application/json')
     res.end(JSON.stringify(json))
   }

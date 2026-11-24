@@ -10,6 +10,9 @@ export default async function handler(req, res) {
   if (typeof body === 'string') {
     try { body = JSON.parse(body) } catch { body = {} }
   }
-  const { status, json } = await handleParseRuleRequest(body)
+  const clientId = String(req.headers['x-forwarded-for'] ?? req.socket?.remoteAddress ?? 'unknown').split(',')[0].trim()
+  const bodyBytes = Number(req.headers['content-length'] ?? 0)
+  const { status, json, headers } = await handleParseRuleRequest(body, { clientId, bodyBytes })
+  for (const [k, v] of Object.entries(headers ?? {})) res.setHeader(k, v)
   res.status(status).json(json)
 }

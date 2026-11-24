@@ -23,6 +23,7 @@ import { parseCartPDF } from './inputs/pdfCart.js'
 import { calculateCheckout, formatRupees } from './engine/discountEngine.js'
 import sampleRulesCsv from '../sample-data/rules.csv?raw'
 import sampleCartCsv from '../sample-data/cart.csv?raw'
+import thresholdCartCsv from '../sample-data/cart-threshold.csv?raw'
 import sampleCartPdf from '../sample-data/cart.pdf?url'
 import sampleSmallPdf from '../sample-data/cart-small.pdf?url'
 import sampleMalformedPdf from '../sample-data/cart-malformed.pdf?url'
@@ -31,6 +32,15 @@ const SAMPLE_PDFS = [
   { href: sampleCartPdf, name: 'cart.pdf', hint: 'the 6-item sample cart' },
   { href: sampleSmallPdf, name: 'cart-small.pdf', hint: 'just below the cart-offer threshold' },
   { href: sampleMalformedPdf, name: 'cart-malformed.pdf', hint: 'has bad rows' },
+]
+
+// One-click scenarios for reviewers: each loads its data and calculates at once.
+const SCENARIOS = [
+  { id: 'standard', title: 'Standard checkout', blurb: "The brief's 6 items: competing offers, stacking and the cart offer" },
+  { id: 'paradox', title: 'Discount paradox', blurb: 'A cart on the Rs.4,000 line, where Rs.1 off costs the customer Rs.399' },
+  { id: 'llm', title: 'Plain-English rule', blurb: 'Text → model → validated rule → impact preview' },
+  { id: 'pdf-bad', title: 'PDF with bad rows', blurb: 'An incomplete order is held for review, not silently loaded' },
+  { id: 'near', title: 'Just below the offer', blurb: 'A PDF cart just short of the Rs.4,000 cart offer' },
 ]
 
 const cap = (v) => v.charAt(0).toUpperCase() + v.slice(1)
@@ -67,6 +77,8 @@ const S = {
   },
   note: { fontSize: 11, color: '#888', marginBottom: 4 },
   demoBar: { display: 'flex', flexWrap: 'wrap', gap: '0.5rem 1rem', alignItems: 'center', fontSize: 12, color: '#555', marginBottom: '1rem' },
+  scenGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.6rem', marginBottom: '1.1rem' },
+  scen: { textAlign: 'left', background: '#fff', border: '1px solid #CECECE', borderTop: '3px solid #FF5800', borderRadius: 6, padding: '0.6rem 0.8rem', cursor: 'pointer', fontFamily: 'inherit' },
   demoBtn: { background: '#fff', border: '1px solid #131A48', color: '#131A48', borderRadius: 4, padding: '0.35rem 0.9rem', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
 }
 
@@ -86,6 +98,9 @@ export default function App() {
   // a new cart re-runs the engine automatically.
   const [calculated, setCalculated] = useState(false)
   const [notice, setNotice]         = useState('')
+  // A PDF with bad rows waits here until someone confirms the partial import.
+  const [pendingImport, setPendingImport] = useState(null)
+  const [preset, setPreset]         = useState(null)
 
   const checkout = useMemo(
     () => (calculated && cartItems.length > 0 ? calculateCheckout(cartItems, rules) : null),
@@ -112,6 +127,7 @@ export default function App() {
       return
     }
     setCartBusy(true)
+    setPendingImport(null)
     const { items, errors, meta } = await parseCartPDF(contents)
     setCartBusy(false)
     if (items.length === 0) {
@@ -119,10 +135,22 @@ export default function App() {
       setCartErrors([`${file.name}: no cart items could be read, so the current cart was kept.`, ...errors])
       return
     }
+    if (errors.length) {
+      // Some rows failed. Loading the rest straight away would show a checkout
+      // total for an incomplete order, so hold it until someone confirms.
+      setCartErrors([])
+      setPendingImport({ items, errors, meta, fileName: file.name })
+      return
+    }
+    applyPdfCart({ items, errors, meta, fileName: file.name })
+  }
+
+  function applyPdfCart({ items, errors, meta, fileName }) {
+    setPendingImport(null)
     setCartItems(items)
-    setCartErrors(errors)
-    setCartSource(`${file.name}${meta.heading ? ` · ${meta.heading}` : ''}`)
-    if (calculated) setNotice(`Cart replaced with ${items.length} item${items.length > 1 ? 's' : ''} from ${file.name}. Prices recalculated.`)
+    setCartErrors(errors.length ? [`Incomplete cart: ${errors.length} row${errors.length > 1 ? 's' : ''} from ${fileName} could not be read and ${errors.length > 1 ? 'are' : 'is'} not included.`, ...errors] : [])
+    setCartSource(`${fileName}${meta.heading ? ` · ${meta.heading}` : ''}`)
+    if (calculated) setNotice(`Cart replaced with ${items.length} item${items.length > 1 ? 's' : ''} from ${fileName}. Prices recalculated.`)
   }
 
   function handleAddRule(rule) {
@@ -140,7 +168,29 @@ export default function App() {
     handleCartLoad(sampleCartCsv, { name: 'sample cart.csv' }, 'csv')
   }
 
-  const canCalculate = rules.length > 0 && cartItems.length > 0
+  async function runScenario(id) {
+    setPendingImport(null)
+    setPreset(null)
+    handleRulesLoad(sampleRulesCsv, { name: 'sample rules.csv' })
+    if (id === 'pdf-bad' || id === 'near') {
+      const href = id === 'pdf-bad' ? sampleMalformedPdf : sampleSmallPdf
+      const name = id === 'pdf-bad' ? 'cart-malformed.pdf' : 'cart-small.pdf'
+      const buf = await (await fetch(href)).arrayBuffer()
+      if (id === 'pdf-bad') handleCartLoad(sampleCartCsv, { name: 'sample cart.csv' }, 'csv')
+      await handleCartLoad(buf, { name }, 'pdf')
+    } else if (id === 'paradox') {
+      handleCartLoad(thresholdCartCsv, { name: 'cart-threshold.csv (exactly Rs.4,000)' }, 'csv')
+      setPreset({ text: 'Rs.1 off on Nordic Basics' })
+    } else {
+      handleCartLoad(sampleCartCsv, { name: 'sample cart.csv' }, 'csv')
+      if (id === 'llm') setPreset({ text: '20% off for Natura Casa brand, stackable with other offers' })
+    }
+    setCalculated(true)
+    setNotice('')
+  }
+
+  // No active promotions is a valid state: every item shows its base price.
+  const canCalculate = cartItems.length > 0
 
   const rulesColumns = [
     { key: 'ruleId',    label: 'Rule ID' },
@@ -170,6 +220,16 @@ export default function App() {
       </div>
 
       <div style={S.main}>
+        <div style={{ fontSize: 12, color: '#555', marginBottom: 6 }}><b style={{ color: '#131A48' }}>Try a scenario</b> · each one loads its data and calculates</div>
+        <div style={S.scenGrid}>
+          {SCENARIOS.map((sc) => (
+            <button key={sc.id} type="button" style={S.scen} onClick={() => runScenario(sc.id)} data-testid={`scenario-${sc.id}`}>
+              <div style={{ fontWeight: 700, fontSize: 12, color: '#131A48' }}>{sc.title}</div>
+              <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>{sc.blurb}</div>
+            </button>
+          ))}
+        </div>
+
         <div style={S.demoBar}>
           <button type="button" style={S.demoBtn} onClick={loadSamples}>Load sample data</button>
           <span>
@@ -202,7 +262,7 @@ export default function App() {
                 <DataTable columns={rulesColumns} rows={rules} />
               </div>
             )}
-            <RuleComposer rules={rules} cartItems={cartItems} onAdd={handleAddRule} />
+            <RuleComposer rules={rules} cartItems={cartItems} onAdd={handleAddRule} preset={preset} />
           </div>
 
           {/* Cart */}
@@ -218,6 +278,29 @@ export default function App() {
               busy={cartBusy}
             />
             <ErrorBanner errors={cartErrors} />
+            {pendingImport && (
+              <div role="alert" data-testid="pdf-review" style={{ border: '1px solid #d4a017', borderLeft: '3px solid #d4a017', background: '#fff8e1', borderRadius: 4, padding: '0.7rem 0.9rem', marginTop: '0.6rem', fontSize: 12 }}>
+                <div style={{ fontWeight: 700, color: '#6b5000', marginBottom: 4 }}>Review this PDF import: {pendingImport.fileName}</div>
+                <div style={{ color: '#5a4300' }}>
+                  Rows found: <b>{pendingImport.items.length + pendingImport.errors.length}</b> · readable: <b>{pendingImport.items.length}</b> · could not be read: <b>{pendingImport.errors.length}</b>
+                </div>
+                <ul style={{ margin: '4px 0 6px', paddingLeft: 18, color: '#5a4300' }}>
+                  {pendingImport.errors.map((e) => <li key={e}>{e}</li>)}
+                </ul>
+                <div style={{ color: '#5a4300' }}>
+                  {cartItems.length ? 'Your current cart has not changed. ' : ''}
+                  Importing now would price an incomplete order, missing the rows above.
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                  <button type="button" style={{ ...S.demoBtn, background: '#FF5800', color: '#fff', border: 'none' }} onClick={() => applyPdfCart(pendingImport)}>
+                    Import {pendingImport.items.length} readable item{pendingImport.items.length > 1 ? 's' : ''}
+                  </button>
+                  <button type="button" style={S.demoBtn} onClick={() => setPendingImport(null)}>
+                    {cartItems.length ? 'Keep current cart' : 'Cancel'}
+                  </button>
+                </div>
+              </div>
+            )}
             {cartItems.length > 0 && (
               <div style={{ marginTop: '0.75rem' }}>
                 <div style={S.note}>{cartItems.length} item{cartItems.length > 1 ? 's' : ''} in cart</div>
@@ -238,7 +321,12 @@ export default function App() {
             </button>
             {!canCalculate && (
               <div style={{ fontSize: 11, color: '#888', marginTop: 6 }}>
-                Load rules and a cart to calculate
+                Load a cart to calculate
+              </div>
+            )}
+            {canCalculate && rules.length === 0 && (
+              <div style={{ fontSize: 11, color: '#888', marginTop: 6 }}>
+                No rules loaded, so every item will show its base price
               </div>
             )}
           </div>
@@ -250,7 +338,7 @@ export default function App() {
             {notice && (
               <div role="status" style={{ fontSize: 12, color: '#1e5c2c', marginBottom: 8 }}>{notice}</div>
             )}
-            <CartSummary checkout={checkout} />
+            <CartSummary checkout={checkout} rules={rules} />
           </div>
         )}
       </div>

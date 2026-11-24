@@ -65,3 +65,32 @@ describe('server parseRuleText', () => {
     expect(res).toMatchObject({ ok: false, status: 503 })
   })
 })
+
+describe('public endpoint protection', () => {
+  it('limits each client per minute, then lets them back in', async () => {
+    const { createRateLimiter } = await import('../server/rateLimit.js')
+    let t = 0
+    const check = createRateLimiter({ perClient: 2, global: 100, windowMs: 60_000, now: () => t })
+    expect(check('a').ok).toBe(true)
+    expect(check('a').ok).toBe(true)
+    expect(check('a')).toEqual({ ok: false, retryAfter: 60 })
+    expect(check('b').ok).toBe(true) // other clients unaffected
+    t = 60_001
+    expect(check('a').ok).toBe(true)
+  })
+
+  it('caps all clients together too', async () => {
+    const { createRateLimiter } = await import('../server/rateLimit.js')
+    const check = createRateLimiter({ perClient: 10, global: 2, now: () => 0 })
+    check('a'); check('b')
+    expect(check('c').ok).toBe(false)
+  })
+
+  it('answers 429 with Retry-After, and 413 for oversized bodies, without calling the LLM', async () => {
+    const { handleParseRuleRequest } = await import('../server/parseRule.js')
+    const blocked = await handleParseRuleRequest({ text: 'x' }, { clientId: '1.2.3.4' }, () => ({ ok: false, retryAfter: 42 }))
+    expect(blocked).toMatchObject({ status: 429, headers: { 'Retry-After': '42' } })
+    const big = await handleParseRuleRequest({ text: 'x' }, { bodyBytes: 100_000 }, () => ({ ok: true }))
+    expect(big.status).toBe(413)
+  })
+})

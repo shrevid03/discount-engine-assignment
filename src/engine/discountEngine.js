@@ -113,6 +113,7 @@ export function applyDiscounts(item, rules) {
       appliedRules: [],
       skippedRules: [],
       reasoning: `No offers available — no current offer covers ${item.brand} or ${item.platform}`,
+      steps: [],
     }
   }
 
@@ -133,25 +134,38 @@ export function applyDiscounts(item, rules) {
     skipped = sorted.slice(1)
   }
 
-  // Apply winner first, then stack on top
+  // Apply winner first, then stack on top. `steps` records every matching rule
+  // and what it did, so the UI can show a "why this price?" breakdown that comes
+  // from the real calculation, not a separate explanation.
   let price = item.basePrice
   const appliedRules = []
   const reasoningParts = []
+  const steps = []
 
   if (winner) {
-    price -= calculateDiscountAmount(price, winner)
+    const winnerSaving = calculateDiscountAmount(price, winner)
+    steps.push({ ruleId: winner.ruleId, label: ruleToReasoning(winner), status: 'best', saving: winnerSaving, from: price, to: price - winnerSaving })
+    price -= winnerSaving
+    for (const r of skipped) {
+      steps.push({ ruleId: r.ruleId, label: ruleToReasoning(r), status: 'not used', saving: calculateDiscountAmount(item.basePrice, r) })
+    }
     appliedRules.push(winner.ruleId)
-    // Tell the customer why they got this offer and not the other one.
-    const beaten = skipped.map((r) => `${ruleToReasoning(r)}`).join(', ')
-    reasoningParts.push(
-      skipped.length
-        ? `${ruleToReasoning(winner)} (better deal than ${beaten})`
-        : ruleToReasoning(winner)
-    )
+    // Tell the customer why they got this offer and not the other one. On a tie
+    // neither is "better": the sort is stable, so the offer listed first wins,
+    // and the reason says the saving is the same.
+    const tied = skipped.filter((r) => calculateDiscountAmount(item.basePrice, r) === winnerSaving)
+    const beaten = skipped.filter((r) => !tied.includes(r))
+    const notes = [
+      ...(tied.length ? [`same saving as ${tied.map(ruleToReasoning).join(', ')}`] : []),
+      ...(beaten.length ? [`better deal than ${beaten.map(ruleToReasoning).join(', ')}`] : []),
+    ]
+    reasoningParts.push(notes.length ? `${ruleToReasoning(winner)} (${notes.join('; ')})` : ruleToReasoning(winner))
   }
 
   for (const rule of stackable) {
-    price -= calculateDiscountAmount(price, rule)
+    const saving = calculateDiscountAmount(price, rule)
+    steps.push({ ruleId: rule.ruleId, label: ruleToReasoning(rule), status: 'stacked', saving, from: price, to: price - saving })
+    price -= saving
     appliedRules.push(rule.ruleId)
     reasoningParts.push(ruleToReasoning(rule))
   }
@@ -169,6 +183,7 @@ export function applyDiscounts(item, rules) {
     appliedRules,
     skippedRules: skipped.map((r) => r.ruleId),
     reasoning: reasoningParts.join(' + '),
+    steps,
   }
 }
 
@@ -248,4 +263,67 @@ export function applyCartOffers(subtotal, rules) {
 export function calculateCheckout(cartItems, rules) {
   const items = processCart(cartItems, rules)
   return { items, ...applyCartOffers(cartTotal(items), rules) }
+}
+
+/**
+ * The brief's order (item offers first, cart offer on what's left) has a trap:
+ * item offers can pull a cart below a cart-offer threshold, so the customer
+ * pays more than with fewer discounts. This doesn't change the price (the
+ * brief's algorithm stands); it reports the conflict so a person can decide.
+ *
+ * Returns null, or { ruleId, label, minCartValue, subtotal, baseSubtotal,
+ * totalWithoutItemOffers, extraPaid }.
+ */
+export function findCartOfferConflict(checkout, rules) {
+  if (checkout.cartOffer && checkout.unmetOffers.length === 0) return null
+  const baseSubtotal = checkout.items.reduce((s, i) => s + i.basePrice, 0)
+  const lost = checkout.unmetOffers.find((o) => baseSubtotal >= o.minCartValue)
+  if (!lost) return null
+  const withoutItemOffers = applyCartOffers(baseSubtotal, rules).total
+  if (withoutItemOffers >= checkout.total) return null
+  return {
+    ruleId: lost.ruleId,
+    label: lost.label,
+    minCartValue: lost.minCartValue,
+    subtotal: checkout.subtotal,
+    baseSubtotal,
+    totalWithoutItemOffers: withoutItemOffers,
+    extraPaid: checkout.total - withoutItemOffers,
+  }
+}
+
+/**
+ * What adding `rule` would do to this cart, computed with the real engine.
+ * Used by the confirm step so nobody activates a promotion blind.
+ *
+ * regression: true when the customer would pay MORE after adding a discount
+ * (the item offer drops the cart under a cart-offer threshold).
+ */
+export function simulateRule(cartItems, rules, rule) {
+  if (!cartItems.length) return null
+  const before = calculateCheckout(cartItems, rules)
+  const after = calculateCheckout(cartItems, [...rules, rule])
+  const changes = after.items
+    .map((it, i) => ({ itemId: it.itemId, product: it.product, basePrice: it.basePrice, before: before.items[i].finalPrice, after: it.finalPrice }))
+    .filter((c) => c.before !== c.after)
+  const matched = cartItems.filter((i) => ruleMatchesItem(i, rule)).length
+  const cartOfferBefore = before.cartOffer?.saving ?? 0
+  const cartOfferAfter = after.cartOffer?.saving ?? 0
+  const maxEffective = after.items.reduce((m, it) => Math.max(m, it.basePrice ? it.totalDiscount / it.basePrice : 0), 0)
+  return {
+    before: before.total,
+    after: after.total,
+    subtotalBefore: before.subtotal,
+    subtotalAfter: after.subtotal,
+    cartOfferBefore,
+    cartOfferAfter,
+    changes,
+    itemCount: cartItems.length,
+    matched,
+    // the rule matches items but loses to an existing offer on every one of them
+    neverWins: rule.scope !== 'cart' && matched > 0 && changes.length === 0,
+    regression: after.total > before.total,
+    cartOfferLost: cartOfferBefore > 0 && cartOfferAfter === 0,
+    maxEffectiveDiscount: Math.round(maxEffective * 100),
+  }
 }

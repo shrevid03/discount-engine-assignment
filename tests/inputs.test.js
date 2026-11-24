@@ -21,6 +21,26 @@ describe('CSV rules', () => {
     expect(errors[1]).toMatch(/^Row 4 skipped: value must be/)
   })
 
+  it('rejects a cart rule with a blank threshold, but accepts an explicit 0', () => {
+    const { data, errors } = parseRulesCSV(
+      'rule_id,scope,applies_to,type,value,stackable,min_cart_value\n' +
+      'A,cart,,percentage,10,false,\n' +
+      'B,cart,,flat,50,false,0\n'
+    )
+    expect(data.map((r) => r.ruleId)).toEqual(['B'])
+    expect(errors[0]).toMatch(/^Row 2 skipped: min_cart_value is missing/)
+  })
+
+  it('skips a second row with the same rule ID', () => {
+    const { data, errors } = parseRulesCSV(
+      'rule_id,scope,applies_to,type,value,stackable\n' +
+      'RULE-01,brand,X,flat,100,false\n' +
+      'rule-01,brand,Y,flat,50,false\n'
+    )
+    expect(data.map((r) => r.appliesTo)).toEqual(['X'])
+    expect(errors).toEqual(['Row 3 skipped: duplicate ID rule-01'])
+  })
+
   it('still reads the original 6-column rules.csv (no min_cart_value column)', () => {
     const { data, errors } = parseRulesCSV('rule_id,scope,applies_to,type,value,stackable\nA,brand,X,flat,100,false')
     expect(errors).toEqual([])
@@ -99,10 +119,25 @@ describe('LLM draft → rule', () => {
 
   it('turns the brief\'s first example into RULE-05', () => {
     const res = draftToRule(ok({ scope: 'brand', applies_to: 'Natura Casa', type: 'percentage', value: 20, stackable: true }), ctx)
-    expect(res).toEqual({
-      status: 'ok', warnings: [],
-      rule: { ruleId: 'RULE-05', scope: 'brand', appliesTo: 'Natura Casa', type: 'percentage', value: 20, stackable: true, minCartValue: 0 },
-    })
+    expect(res.rule).toEqual({ ruleId: 'RULE-05', scope: 'brand', appliesTo: 'Natura Casa', type: 'percentage', value: 20, stackable: true, minCartValue: 0 })
+    // Natura Casa already has RULE-02, so the operator is told before confirming.
+    expect(res.warnings).toEqual(['Natura Casa already has an offer (RULE-02: Rs.150 off). Check whether this one should replace it.'])
+  })
+
+  it('refuses a cart rule with no threshold instead of discounting every cart', () => {
+    const res = draftToRule(ok({ scope: 'cart', type: 'percentage', value: 10, min_cart_value: 0 }), ctx)
+    expect(res.status).toBe('ambiguous')
+    expect(res.message).toMatch(/minimum cart value/)
+  })
+
+  it('passes an "unsupported" answer through without making a rule', () => {
+    const res = draftToRule(ok({ status: 'unsupported', scope: 'platform', applies_to: 'Flipkart', type: 'percentage', value: 15, clarification: 'The engine cannot cap a discount at Rs.200.' }), ctx)
+    expect(res).toEqual({ status: 'unsupported', message: 'The engine cannot cap a discount at Rs.200.' })
+  })
+
+  it('flags an exact duplicate', () => {
+    const res = draftToRule(ok({ scope: 'platform', applies_to: 'flipkart', type: 'percentage', value: 10, stackable: true }), ctx)
+    expect(res.warnings).toContain('This looks the same as RULE-03.')
   })
 
   it('cart rule keeps its threshold and drops applies_to', () => {

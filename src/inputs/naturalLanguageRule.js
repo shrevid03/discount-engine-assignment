@@ -8,6 +8,7 @@
  * Result shapes:
  *   { status: 'ok', rule, warnings[] }          → show the confirm/discard card
  *   { status: 'ambiguous', message }            → ask the user to be more specific
+ *   { status: 'unsupported', message }          → a real offer the engine can't express (cap, exclusion, date…)
  *   { status: 'error', message }                → network / config / LLM failure
  */
 
@@ -30,10 +31,25 @@ export function draftToRule(draft, { rules = [], cartItems = [] } = {}) {
   if (!draft || typeof draft !== 'object') {
     return { status: 'error', message: 'The LLM response was empty. Please try again.' }
   }
+  if (draft.status === 'unsupported') {
+    return {
+      status: 'unsupported',
+      message: draft.clarification || "This offer has a condition the engine can't apply, so it wasn't turned into a rule.",
+    }
+  }
   if (draft.status === 'ambiguous') {
     return {
       status: 'ambiguous',
       message: draft.clarification || 'That description is missing details. Say how much off, and which brand, platform or cart value it applies to.',
+    }
+  }
+
+  // The model always fills min_cart_value; for a cart rule, 0 almost always means
+  // "no threshold was given", and that must not become a discount on every cart.
+  if (draft.scope === 'cart' && !(Number(draft.min_cart_value ?? draft.minCartValue) > 0)) {
+    return {
+      status: 'ambiguous',
+      message: 'Say the minimum cart value for this cart offer, for example "10% off carts of Rs.4,000 or more".',
     }
   }
 
@@ -58,14 +74,16 @@ export function draftToRule(draft, { rules = [], cartItems = [] } = {}) {
   if (rule.scope === 'platform' && !cartItems.some((i) => norm(i.platform) === norm(rule.appliesTo))) {
     warnings.push(`No item in the current cart is sold on "${rule.appliesTo}", so this rule won't change today's prices.`)
   }
-  if (rule.scope === 'cart' && rule.minCartValue === 0) {
-    warnings.push('This cart offer has no minimum, so it applies to every cart.')
-  }
-  const duplicate = rules.find((r) =>
-    r.scope === rule.scope && norm(r.appliesTo) === norm(rule.appliesTo) &&
+  const sameTarget = rules.filter((r) => r.scope === rule.scope && norm(r.appliesTo) === norm(rule.appliesTo))
+  const duplicate = sameTarget.find((r) =>
     r.type === rule.type && r.value === rule.value && r.stackable === rule.stackable &&
     r.minCartValue === rule.minCartValue)
   if (duplicate) warnings.push(`This looks the same as ${duplicate.ruleId}.`)
+  else if (sameTarget.length) {
+    const target = rule.scope === 'cart' ? 'The cart' : rule.appliesTo
+    const list = sameTarget.map((r) => `${r.ruleId}: ${r.type === 'percentage' ? `${r.value}%` : `Rs.${r.value}`} off${r.stackable ? ', stackable' : ''}`).join('; ')
+    warnings.push(`${target} already has an offer (${list}). Check whether this one should replace it.`)
+  }
 
   return { status: 'ok', rule, warnings }
 }

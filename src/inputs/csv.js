@@ -23,23 +23,30 @@ function parseRows(csvText) {
   return { rows: data, fatal: fatal.map((e) => e.message) }
 }
 
-function collect(csvText, validate, key) {
+function collect(csvText, validate, key, idKey) {
   const { rows, fatal } = parseRows(csvText)
   if (fatal.length) return { data: [], errors: fatal }
   const data = []
   const errors = []
+  const seen = new Set()
   rows.forEach((row, i) => {
     const result = validate(row)
-    if (result[key]) data.push(result[key])
-    else errors.push(`Row ${i + 2} skipped: ${result.errors.join('; ')}`)
+    const id = result[key]?.[idKey]?.toUpperCase()
+    if (result[key] && seen.has(id)) {
+      // Two rows with one ID would make "remove RULE-02" or an applied-rule list ambiguous.
+      errors.push(`Row ${i + 2} skipped: duplicate ID ${result[key][idKey]}`)
+    } else if (result[key]) {
+      seen.add(id)
+      data.push(result[key])
+    } else errors.push(`Row ${i + 2} skipped: ${result.errors.join('; ')}`)
   })
   return { data, errors }
 }
 
 export function parseRulesCSV(csvText) {
-  return collect(csvText, validateRule, 'rule')
+  return collect(csvText, validateRule, 'rule', 'ruleId')
 }
 
 export function parseCartCSV(csvText) {
-  return collect(csvText, validateCartItem, 'item')
+  return collect(csvText, validateCartItem, 'item', 'itemId')
 }
