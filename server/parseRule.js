@@ -69,7 +69,11 @@ export async function parseRuleText(text, context = {}, client = null) {
     }
   }
 
-  const ai = client ?? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+  const ai = client ?? new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY,
+    // systemInstruction and responseJsonSchema are only served on v1beta.
+    apiVersion: 'v1beta',
+  })
   const request = (withSchema) => ai.models.generateContent({
     model: MODEL,
     contents: `<rule_description>\n${input}\n</rule_description>`,
