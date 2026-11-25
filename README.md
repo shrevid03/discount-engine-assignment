@@ -2,47 +2,47 @@
 
 [![Tests](https://github.com/shrevid03/discount-engine-assignment/actions/workflows/test.yml/badge.svg)](https://github.com/shrevid03/discount-engine-assignment/actions/workflows/test.yml)
 
-A customer-facing cart pricing engine: each item gets the offer that saves the customer the most, stackable offers go on top, and a cart-level offer applies to the total once it crosses a threshold. Rules can come from a CSV or from plain English (parsed by an LLM, with a confirm step). Carts can come from a CSV or a PDF.
+A customer-facing cart pricing engine. Each item gets the offer that saves the customer the most, stackable offers apply on top, and a cart-level offer applies to the total once it crosses a threshold. Rules can be loaded from CSV or written in plain English (parsed by an LLM, then confirmed by a person). Carts can be loaded from CSV or PDF.
 
 **Live app:** https://discount-engine-assignment-iota-nine.vercel.app
 
 ## Highlights
 
-- **Found a pricing trap in the brief: a discount that raises the price.** Item offers apply first and the cart offer is checked on what's left, so a cart sitting at Rs.4,000 pays Rs.3,600, but add "Rs.1 off Nordic Basics" and it drops to Rs.3,999, loses the cart offer and pays **Rs.399 more**. The app doesn't silently change the brief's algorithm. It catches this before a rule goes live (the confirm card turns red: "This discount makes the customer pay Rs.399 more", button becomes "Add anyway"), and flags it on the checkout if it happens anyway. Click **Discount paradox** at the top of the app to see it.
-- **Matches the brief exactly:** Rs.5,932 → Rs.5,339, with the cart offer on its own row. Every item has a "Why this price?" breakdown built from the engine's own calculation steps, not a second explanation that could drift.
-- **Every rule shows its effect before it goes live:** checkout before and after, which items change and by how much, whether the cart offer survives, and warnings for rules that never beat an existing offer, overlap an existing offer, or push an item past 40% off.
-- **The LLM is measured, not trusted.** Latest live run: 29 of 29 answered cases correct and **0 unsafe acceptances** (12 cases hit the free-tier rate limit and are reported as not run). The eval covers casual wording, typos, ₹ amounts, Hinglish, and a "tricky" set, mostly conditions the engine can't represent, built to catch the dangerous failure: a condition the engine can't represent being quietly dropped ("15% off up to ₹200" becoming an uncapped 15%). Those now come back as "the engine can't apply this offer as written" instead of a wrong rule. The report counts **unsafe acceptances** separately from accuracy ([results](evals/results.md)).
-- **Incomplete orders aren't priced silently:** a PDF with bad rows is held for review ("Rows found 5 · readable 2 · could not be read 3"), and the current cart stays until someone confirms. Clean PDFs still load automatically.
-- **Found a second conflict in the brief:** its stacking order for ITEM-02 gives Rs.629, but its own "biggest saving" principle gives Rs.614 ([details](#where-id-do-it-differently)).
-- **Inputs adapt to the engine:** every input mode is one file in `src/inputs/` going through one validator. A fourth mode touches nothing in `engine/`. 63 tests run in CI.
+- **A pricing conflict in the brief: a discount that raises the price.** Item offers apply first and the cart offer is checked against what remains. A Rs.4,000 cart therefore pays Rs.3,600, but adding "Rs.1 off Nordic Basics" brings the subtotal to Rs.3,999, the cart offer is lost, and the customer pays **Rs.399 more**. The app keeps the brief's algorithm and makes the conflict visible instead: the confirm card turns red ("This discount makes the customer pay Rs.399 more") and its button becomes "Add anyway", and the checkout flags the conflict to the operator if such a rule is active. The **Discount paradox** scenario demonstrates it.
+- **Reproduces the brief's expected results:** Rs.5,932 → Rs.5,339, with the cart offer on its own row. Each item has a "Why this price?" breakdown generated from the engine's own calculation steps, so the explanation and the price come from the same computation.
+- **Every new rule shows its effect before it goes live:** checkout before and after, which items change and by how much, whether the cart offer is kept, and warnings for rules that never beat an existing offer, overlap or duplicate an existing offer, or push an item past 40% off.
+- **LLM output is measured and validated, not trusted.** In the most recent evaluation run, 29 of the 29 completed cases were correct, with **0 unsafe acceptances**. 12 of the 41 cases did not complete because of provider rate limiting and are reported as not run. The evaluation targets the most damaging failure mode: a condition the engine cannot represent being silently dropped ("15% off up to ₹200" becoming an uncapped 15%). Such inputs are returned as unsupported rather than converted into an incorrect rule ([results](evals/results.md)).
+- **Incomplete orders are not priced silently.** A PDF with unreadable rows is held for review ("Rows found 5 · readable 2 · could not be read 3"), and the current cart stays in place until someone confirms. Clean PDFs load automatically.
+- **A second conflict in the brief:** its stacking order for ITEM-02 gives Rs.629, while its own "biggest saving" principle gives Rs.614 ([details](#proposed-changes-to-the-brief)).
+- **Input modes are decoupled from the engine.** Each input mode is one adapter in `src/inputs/` that goes through a shared validator, so adding a fourth mode requires no changes in `engine/`. 63 tests run in CI.
 
 ## Run locally
 
 ```bash
 npm install
-cp .env.example .env.local   # optional: add a free GEMINI_API_KEY to enable plain-English rules
+cp .env.example .env.local   # optional: add a GEMINI_API_KEY to enable plain-English rules
 npm run dev                  # http://localhost:5173
 ```
 
-Everything except the plain-English rule box works without a key. `npm test` runs the test suite (63 tests). GitHub Actions runs the tests and the build on every push.
+Everything except the plain-English rule input works without an API key. `npm test` runs the test suite (63 tests). GitHub Actions runs the tests and the production build on every push.
 
 ## Try it
 
-The quickest way is the **Try a scenario** row at the top of the app. Each button loads its data and calculates straight away:
+The **Try a scenario** row at the top of the app loads data for each case and calculates immediately:
 
 | Scenario | What it shows |
 |---|---|
 | Standard checkout | The brief's 6 items and the expected Rs.5,339. Open "Why this price?" on any item. |
-| Discount paradox | A cart at exactly Rs.4,000. Click **Parse rule** on the pre-filled "Rs.1 off on Nordic Basics" to see the safety check. |
+| Discount paradox | A cart at exactly Rs.4,000. Parse the pre-filled "Rs.1 off on Nordic Basics" to see the safety check. Uploading `sample-data/rules-paradox.csv` shows the same conflict without the LLM. |
 | Plain-English rule | The brief's 20% Natura Casa example, ready to parse, with the full impact preview. |
-| PDF with bad rows | The partial-import review: nothing changes until you confirm. |
+| PDF with bad rows | The partial-import review: nothing changes until the import is confirmed. |
 | Just below the offer | A PDF cart just short of Rs.4,000, with the "Add Rs.X more" hint. |
 
-Or by hand:
+Manual walkthrough:
 
-1. Click **Load sample data** (or upload `sample-data/rules.csv` and `sample-data/cart.csv`), then click **Calculate Discounts**.
-2. Type a rule in plain English (or click an example), check the parsed fields and the effect on the cart, then **Confirm & add** or **Discard**. Prices update immediately.
-3. Upload a cart PDF to replace the cart: `cart.pdf`, `cart-small.pdf` (just below the cart-offer threshold) or `cart-malformed.pdf` (bad rows, held for review). They're linked at the top of the page and in `sample-data/`.
+1. Click **Load sample data** (or upload `sample-data/rules.csv` and `sample-data/cart.csv`), then **Calculate Discounts**.
+2. Enter a rule in plain English (or pick an example), review the parsed fields and the effect on the cart, then **Confirm & add** or **Discard**. Prices update immediately.
+3. Upload a cart PDF to replace the cart: `cart.pdf`, `cart-small.pdf` (just below the cart-offer threshold) or `cart-malformed.pdf` (unreadable rows, held for review). They are linked at the top of the page and stored in `sample-data/`.
 
 Expected results for the sample data:
 
@@ -58,7 +58,7 @@ Expected results for the sample data:
 | | | **−Rs.593** | Cart offer: 10% off, Rs.593 saved |
 | | | **Rs.5,339** | Final cart total |
 
-## How it's built
+## Architecture
 
 ```
 src/
@@ -74,78 +74,80 @@ src/
 server/parseRule.js        the LLM call (Gemini, JSON-schema output)
 server/rateLimit.js        per-client and per-instance limits for the public endpoint
 api/parse-rule.js          Vercel function wrapping server/parseRule.js
-tests/                     engine, adapters, and LLM handler tests
+tests/                     engine, adapter, and LLM handler tests
 ```
 
-The engine never knows where a rule or item came from. Every input mode goes through the same validators in `models.js`, so **a third input mode is a new file in `src/inputs/` and nothing in `engine/` changes**. The engine change for this assignment was additive: a `cart` scope, `minCartValue`, and `applyCartOffers()` run after the existing item logic.
+The engine has no knowledge of where a rule or item came from. All input modes go through the same validators in `models.js`, so a new input mode is a new file in `src/inputs/` with no changes in `engine/`. The engine changes for this assignment were additive: a `cart` scope, `minCartValue`, and `applyCartOffers()`, which runs after the existing item logic.
 
-## How reliable is the LLM parsing?
+## Evaluating the LLM parser
 
-Three working examples don't show much, so `evals/rule-cases.json` holds 41 phrasings with the right answer for each, in three groups:
+A handful of working examples says little about reliability, so `evals/rule-cases.json` defines 41 phrasings, each with its expected result, in three groups:
 
-- **Core (24):** the brief's 4 examples, casual wording ("flat 100 rs off on flipkart stuff", "buy above 5k get 10% off"), ₹ amounts, typos ("flipkrt", "natura casaa"), and inputs that should be refused (two rules at once, no amount, "150% off", a prompt injection).
-- **Unsupported and tricky (13):** 8 conditions the engine can't represent, which must be refused rather than dropped: a cap ("up to ₹200"), an exclusion ("except Natura Casa"), brand + platform together, a time limit ("only today"), "whichever is higher", a quantity, a single product, first-time customers. Plus an injection that dictates the output fields (refuse), and 4 valid rules that look risky but must still parse correctly: "20% off, but only on Natura Casa", "10% off on Flipkart, not stackable", "10% off above ₹5,000" (read as ≥ Rs.5,000, shown on the confirm card), and "add another 10% Flipkart discount", which must also point out the existing Flipkart offer (RULE-03), as an overlap or a duplicate.
-- **Hinglish (4):** "Flipkart pe 100 rupaye off sab products par", "Cart 5000 se zyada ho toh 10% discount", and so on. Kept separate so it doesn't inflate the English score.
+- **Core (24):** the brief's 4 examples, casual wording ("flat 100 rs off on flipkart stuff", "buy above 5k get 10% off"), ₹ amounts, typos ("flipkrt", "natura casaa"), and inputs that must be refused (two rules in one sentence, no amount, "150% off", a prompt injection).
+- **Unsupported and tricky (13):** 8 conditions the engine cannot represent, which must be refused rather than dropped: a cap ("up to ₹200"), an exclusion ("except Natura Casa"), brand and platform combined, a time limit ("only today"), "whichever is higher", a quantity, a single product, and first-time customers. It also includes an injection that dictates the output fields (must be refused), and 4 valid rules that look risky but must still parse correctly: "20% off, but only on Natura Casa", "10% off on Flipkart, not stackable", "10% off above ₹5,000" (read as ≥ Rs.5,000 and shown on the confirm card), and "add another 10% Flipkart discount", which must also flag the existing Flipkart offer (RULE-03) as an overlap or duplicate.
+- **Hinglish (4):** for example "Flipkart pe 100 rupaye off sab products par" and "Cart 5000 se zyada ho toh 10% discount". Reported separately so they do not affect the English score.
 
-`npm run eval` runs every case through the live parser and the same validation the UI uses, then writes [`evals/results.md`](evals/results.md) with: requests completed, exact field match on rule cases, correct refusals, **unsafe acceptances** (a refuse case that produced a rule, the failure that matters most) and latency.
+`npm run eval` sends every case through the deployed parser and the same validation the UI uses, then writes [`evals/results.md`](evals/results.md) with requests completed, exact field match on rule cases, correct refusals, **unsafe acceptances** (a refuse case that produced a rule, the failure that matters most) and latency.
 
-**Latest run (41 cases): 29 of 29 answered cases correct, 0 unsafe acceptances.** Every unsupported condition that ran was refused (a cap, an exclusion, brand + platform together, either/or, a single product), and both prompt injections were caught. 12 cases didn't complete because they hit Gemini's free-tier rate limit (one was a "high demand" error), including all 4 Hinglish cases, so those are untested, not passed. Full table in [`evals/results.md`](evals/results.md); `npm run eval -- --retry-errors` finishes the missing ones.
+**Most recent run (41 cases): 29 of 29 completed cases correct, 0 unsafe acceptances.** Every unsupported condition that ran was refused (a cap, an exclusion, brand and platform combined, either/or, a single product), and both prompt injections were refused.
 
-## Where I'd do it differently
+**Limitations of this run:** 12 cases did not complete (11 rate-limited, 1 temporary provider unavailability). They include all 4 Hinglish cases, the time-limit, quantity and customer conditions, and the RULE-03 overlap case, so those are untested rather than passed. Latencies in this run include the script's back-off waits; the script has since been changed to time only the final request. The full table is in [`evals/results.md`](evals/results.md), and `npm run eval -- --retry-errors` re-runs the incomplete cases. A 41-case set is a regression check, not a statistical guarantee: model behaviour can change between versions, which is why confirmation and validation stay in place regardless of the score.
 
-The brief invites pushing back on its design choices. These are the four I'd raise. The app follows the brief as written, so its numbers match the expected results.
+## Proposed changes to the brief
 
-| The brief's choice | What I'd propose | Why |
+The brief invites challenges to its design choices. These are five changes I would propose. The app implements the brief as written, so its results match the expected output.
+
+| The brief's choice | Proposed change | Rationale |
 |---|---|---|
-| Item offers first, then the cart offer on what's left | Check the cart threshold against the cart's value **before** item discounts (or give the customer the better of the two totals) | Under the brief's order, a new item discount can pull a cart under the threshold, so the customer pays more for getting a discount: Rs.1 off turns Rs.3,600 into Rs.3,999. That's a pricing-policy decision for Opptra, not one to make silently in code, so the app keeps the brief's order and **detects** it: the confirm card turns red and its button becomes "Add anyway", and the checkout shows the conflict to the operator. |
-| A stackable rule applies **after** the winning rule (ITEM-02: Rs.150 off, then 10% → Rs.629) | Apply percentage discounts before flat ones (10% off, then Rs.150 → Rs.614) | The brief's own principle is "always give the customer the biggest saving", and this order saves Rs.15 more on the same two offers. I kept the brief's order because it defines the expected results, but the two rules conflict, and someone should choose deliberately. |
-| Stackable rules always stack, with no limit | Add a per-item cap on total discount (for example 40%) | Every new stackable rule compounds. One plain-English rule ("20% off Natura Casa, stackable") takes ITEM-02 to 41% off. The confirm card now warns above 40%, but real campaigns need a margin floor that no combination of offers can break. |
-| Confirm every parsed rule | Keep it, and show its effect before confirming (built: checkout before/after, each item that changes, cart offer kept or lost) | A field list says what the rule *is*; the impact preview says what it *does*. A misread "Rs.100" as "100%" is obvious when the total collapses. |
-| Carts arrive as a PDF table | Use a structured export or an order-ID lookup. For outside PDFs, use LLM extraction followed by the same validation and confirm step | Parsing a rendered document depends on its layout. I handled the cases I could find (wrapped cells, ₹ prices, total rows, browser-printed PDFs), but the next layout will find a new edge. |
+| Item offers first, then the cart offer on the remaining total | Check the cart threshold against the cart's value **before** item discounts (or give the customer the better of the two totals) | Under the brief's order, a new item discount can pull a cart below the threshold, so the customer pays more because of a discount: Rs.1 off turns Rs.3,600 into Rs.3,999. This is a pricing-policy decision for Opptra rather than something to change silently in code, so the app keeps the brief's order and **detects** the conflict: the confirm card turns red with an "Add anyway" button, and the checkout shows the conflict to the operator. |
+| A stackable rule applies **after** the winning rule (ITEM-02: Rs.150 off, then 10% → Rs.629) | Apply percentage discounts before flat ones (10% off, then Rs.150 → Rs.614) | The brief's stated principle is "always give the customer the biggest saving", and this order saves Rs.15 more with the same two offers. The app keeps the brief's order because it defines the expected results, but the two requirements conflict and the choice should be made deliberately. |
+| Stackable rules always stack, with no limit | Add a per-item cap on total discount (for example 40%) | Every new stackable rule compounds. A single plain-English rule ("20% off Natura Casa, stackable") takes ITEM-02 to 41% off. The confirm card warns above 40%, but production campaigns need a margin floor that no combination of offers can break. |
+| Confirm every parsed rule | Keep confirmation, and show the rule's effect before confirming (implemented: checkout before and after, each item that changes, cart offer kept or lost) | A field list shows what a rule *is*; the impact preview shows what it *does*. A misread of "Rs.100" as "100%" is obvious when the total collapses. |
+| Carts arrive as a PDF table | Use a structured export or an order-ID lookup; for third-party PDFs, use LLM extraction followed by the same validation and confirm step | Parsing a rendered document depends on its layout. The parser handles the variations tested (wrapped cells, ₹ prices, total rows, browser-printed PDFs), but new layouts will introduce new edge cases. |
 
-## Decisions and tradeoffs
+## Decisions and trade-offs
 
 **Cart offer**
-- Evaluated on the sum of final item prices, after item discounts, and shown as its own row, never spread across items. The row only appears when the cart qualifies.
-- The threshold is inclusive (`total ≥ min`), matching RULE-04. A cart Rs.1 below gets no offer; instead the summary shows "Add Rs.X more to unlock Cart offer: 10% off". That's useful to a customer, and it makes the near-miss case visible instead of silent.
-- If several cart rules qualify, the same logic as items applies: the biggest non-stackable saving wins, stackable cart rules go on top.
-- A cart rule must state its threshold. A blank `min_cart_value` is rejected in every input mode, rather than quietly becoming "every cart qualifies". A cart offer for every cart is allowed only when someone writes `0` on purpose (the plain-English path asks for a threshold instead).
+- Evaluated on the sum of final item prices (after item discounts) and shown as its own row rather than distributed across items. The row appears only when the cart qualifies.
+- The threshold is inclusive (`total ≥ min`), matching RULE-04. A cart Rs.1 below the threshold gets no offer; the summary shows "Add Rs.X more to unlock Cart offer: 10% off" instead, which helps the customer and makes the near-miss case visible.
+- If several cart rules qualify, the item logic applies: the largest non-stackable saving wins, and stackable cart rules apply on top.
+- A cart rule must state its threshold. A blank `min_cart_value` is rejected in every input mode rather than defaulting to "every cart qualifies". An offer for every cart requires an explicit `0` (the plain-English path asks for a threshold instead).
 - When item offers push a cart below a threshold it would otherwise meet, the checkout shows an operator note with what the customer would have paid without them (see the paradox above).
 
 **Plain-English rules (LLM)**
-- **The API key stays on the server.** A static deploy would have to ship the key to every visitor's browser, so the LLM call runs in a small serverless function (`/api/parse-rule`). The rest of the app is still static. This is the one place I added a backend, and the brief allows it.
-- **Gemini** (`gemini-2.5-flash`, changeable with `GEMINI_MODEL`) because it has a free API tier, which is enough for a prototype. The provider is isolated in `server/parseRule.js`; swapping LLMs touches only that file.
-- The model is constrained to a JSON schema (`responseJsonSchema`, temperature 0), and its answer is still treated as untrusted: the browser runs it through the same `validateRule()` the CSV uses. A response that claims to be fine but fails validation (no value, a 150% discount, unknown scope) is shown as "Need a bit more detail", never added.
-- Ambiguous input ("Give a discount for big orders") comes back as `status: "ambiguous"` with a one-line clarification telling the user what to add. The prompt tells the model never to invent a value, threshold or name.
-- The confirm card shows every parsed field and warns about rules that won't do anything (for example, a brand that isn't in the cart) or that duplicate an existing rule. **I kept the confirmation step**: one misread "Rs.100" as "100%" changes every price, so a human check before a rule goes live is worth one extra click.
+- **The API key stays on the server.** A static deployment would have to expose the key to every visitor, so the LLM call runs in a small serverless function (`/api/parse-rule`) while the rest of the app remains static. This is the only backend component, which the brief allows.
+- **Provider:** Gemini (`gemini-2.5-flash`, configurable with `GEMINI_MODEL`), chosen for low cost and latency at prototype scale. The provider integration is contained in `server/parseRule.js`, so changing providers is isolated to that file.
+- The model is constrained to a JSON schema (`responseJsonSchema`, temperature 0), and its output is still treated as untrusted: the browser runs it through the same `validateRule()` the CSV path uses. A response that reports success but fails validation (no value, a 150% discount, an unknown scope) is shown as "Need a bit more detail" and is not added.
+- Ambiguous input ("Give a discount for big orders") returns `status: "ambiguous"` with a one-line clarification of what to add. The prompt instructs the model not to invent a value, threshold or name; validation and the confirm step cover cases where it does.
+- The confirm card shows every parsed field and warns about rules that will have no effect (for example, a brand not in the cart) or that duplicate an existing rule. **Confirmation is kept deliberately**: a single misread of "Rs.100" as "100%" changes every price, so a human check before a rule goes live is worth one extra click.
 - Brand and platform names already loaded are sent as context, so "flipkart" or "natura casa" are stored with the exact spelling the matcher needs.
-- "More than Rs.5,000" is read as a Rs.5,000 threshold with the same inclusive `≥` as RULE-04. Treating it as strictly greater would mean one cart rule using `>` and another using `≥`, which the customer can't see. The confirm card shows the threshold so the user can correct it.
-- **Conditions the engine can't represent are refused, not dropped.** This depends on the model spotting the condition, so it is measured by the eval rather than assumed. Caps, exclusions, brand + platform combinations, dates, quantities, single products, customer conditions and either/or offers come back as `status: "unsupported"`, shown as "The engine can't apply this offer as written". Turning "15% off up to ₹200" into an uncapped 15% is worse than invalid JSON, because it looks right.
-- **The public endpoint is protected.** The key is server-side, and the endpoint itself is limited: 8 requests a minute per client and 60 per instance (`server/rateLimit.js`, answers 429 with `Retry-After`), request bodies over 8 KB are refused, the name lists sent as context are capped, and the Gemini call times out after 15 seconds. The limiter lives in memory, so it's per serverless instance: enough to stop one script draining the free quota. Production would use a shared store or the host's firewall rules.
-- **Gemini's free tier is sometimes busy.** A "high demand" answer is retried once, and if the main model is busy, out of quota, or not available to the key, the call moves to a backup model (`gemini-flash-latest`, changeable with `GEMINI_FALLBACK_MODEL`), since free-tier quotas are per model. If neither name exists for the key (Google renames models, and new projects may not get older ones), the server asks Google which Flash model the key can use and picks the newest stable one. The answer still goes through the same validation.
-- Failures (no key configured, rate limit, timeout, refusal, truncated or non-JSON output, network down) each produce a plain message in the UI, which also points to the CSV upload as a way to keep adding rules. None of them crash the page or touch the active rules.
+- "More than Rs.5,000" is read as a Rs.5,000 threshold with the same inclusive `≥` as RULE-04. Treating it as strictly greater would mean one cart rule uses `>` and another uses `≥`, a difference the customer cannot see. The confirm card shows the threshold so the user can correct it.
+- **Conditions the engine cannot represent are refused, not dropped.** This depends on the model recognising the condition, so it is measured by the evaluation rather than assumed. Caps, exclusions, brand and platform combinations, dates, quantities, single products, customer conditions and either/or offers are returned as `status: "unsupported"` and shown as "The engine can't apply this offer as written". Turning "15% off up to ₹200" into an uncapped 15% is worse than invalid JSON, because the result looks correct.
+- **The public endpoint is protected.** Requests are limited to 8 per minute per client and 60 per minute per instance (`server/rateLimit.js`, which returns 429 with `Retry-After`). Request bodies over 8 KB are rejected, the name lists sent as context are capped, and the upstream call times out after 25 seconds. The limiter is in memory and therefore per serverless instance, which is sufficient to stop a single client exhausting the provider quota; production would use a shared store or the host's firewall rules.
+- **Provider availability and quota.** LLM APIs return transient "busy" errors and enforce per-model quotas, so the call is designed to degrade gracefully. A busy or timed-out request is retried once. If the primary model is busy, out of quota, or unavailable to the key, the call falls back to a secondary model (`gemini-flash-latest`, configurable with `GEMINI_FALLBACK_MODEL`). If neither model is available to the key (providers rename and retire models), the server queries the provider for an available Flash model and uses the newest stable one. Every fallback response goes through the same validation and confirm step.
+- Failures (no key configured, rate limit, timeout, refusal, truncated or non-JSON output, network errors) are handled and shown as a plain message in the UI, which also points to CSV upload as an alternative way to add rules. They leave the active rules unchanged.
 
 **PDF cart**
-- Parsed in the browser with pdf.js, so no upload server is needed. Columns are found from where the header words (Product, Brand, Platform, Base Price) sit on the page, so names with spaces ("Cushion Cover", "Amazon India") don't get split. If a row is stored as one text run, it falls back to splitting on wide gaps, tabs or pipes. Names that wrap onto two or three lines inside a cell are joined back together, and `₹`/`Rs.` prices, right-aligned price columns and Total rows are handled. Besides the sample PDFs, the tests include PDFs printed from a browser (`tests/fixtures/`), so it's not only tuned to one generator.
-- **Malformed rows are listed by row with the reason** ("Row 2 skipped: missing Base Price", "Row 3 skipped: base price must be a positive rupee amount (got "Rs.TBD")"). If any row fails, the import is **held for review**: "Rows found 5 · readable 2 · could not be read 3", with **Import 2 readable items** or **Keep current cart**. Loading the good rows straight away would show a checkout total for an incomplete order, which looks cheaper than the real one. A clean PDF still replaces the cart and re-runs the engine automatically, as the brief asks.
-- If no row can be read (wrong file, scanned image, missing header), **the current cart is kept** and the user is told why, rather than replacing the cart with nothing.
-- Item IDs are generated (ITEM-01, ITEM-02, …) because the PDF format has none.
-- Alternative I'd propose for production: the PDF assumption is fragile. If carts come from Opptra's own systems, a JSON/CSV export (or an order ID lookup) is more reliable than parsing a rendered document. For PDFs from outside, an LLM extraction pass with the same validation and confirm step would handle varied layouts better than column positions.
+- Parsed in the browser with pdf.js, so no upload server is needed. Columns are located from the positions of the header words (Product, Brand, Platform, Base Price), so names with spaces ("Cushion Cover", "Amazon India") are not split. If a row is stored as a single text run, the parser falls back to splitting on wide gaps, tabs or pipes. Names that wrap onto two or three lines within a cell are rejoined, and `₹`/`Rs.` prices, right-aligned price columns and total rows are handled. In addition to the sample PDFs, the tests include browser-printed PDFs (`tests/fixtures/`) to avoid tuning the parser to a single generator.
+- **Malformed rows are reported by row with the reason** ("Row 2 skipped: missing Base Price", "Row 3 skipped: base price must be a positive rupee amount (got "Rs.TBD")"). If any row fails, the import is **held for review**: "Rows found 5 · readable 2 · could not be read 3", with **Import 2 readable items** or **Keep current cart**. Loading only the readable rows immediately would show a checkout total for an incomplete order, which understates the real total. A clean PDF replaces the cart and re-runs the engine automatically, as the brief requires.
+- If no row can be read (wrong file, scanned image, missing header), the current cart is kept and the user is told why, rather than replacing the cart with an empty one.
+- Item IDs are generated (ITEM-01, ITEM-02, …) because the PDF format does not include them.
+- For production, see the PDF row under [Proposed changes](#proposed-changes-to-the-brief): a structured export or order-ID lookup is more reliable than parsing a rendered document.
 
 **Engine details**
-- Rounding happens per discount step, which reproduces the brief's numbers exactly (ITEM-02: 849 − 150 = 699, then 699 × 0.9 = 629). Amounts are whole rupees and capped at Rs.1 crore, so floating-point error can't creep in.
-- **Ties:** when two non-stackable offers save exactly the same, the one listed first wins (deterministic), and the reason says "same saving as …", never "better deal than".
-- Stackable offers apply in the order they're listed. With one stackable per item (as in the sample) the order doesn't matter; with several, a percentage-then-flat order would save the customer more, which is the same question as the ITEM-02 row above.
-- A flat discount can't take a price below zero. A 100% discount is rejected: a free item is a different business decision from a promotion.
-- No rules is a valid state: the cart still calculates, and every item shows its base price with a no-offer reason.
-- Rule and item IDs must be unique; a second row with the same ID is skipped with a reason.
+- Rounding is applied per discount step, which reproduces the brief's numbers (ITEM-02: 849 − 150 = 699, then 699 × 0.9 = 629). Amounts are whole rupees, capped at Rs.1 crore, and rounded at each step, which keeps floating-point error from accumulating across steps.
+- **Ties:** when two non-stackable offers save the same amount, the first one listed wins (deterministic), and the explanation reads "same saving as …" rather than "better deal than".
+- Stackable offers apply in the order listed. With one stackable offer per item (as in the sample data) the order does not matter; with several, a percentage-then-flat order would save the customer more, which is the same question as the ITEM-02 row above.
+- A flat discount cannot take a price below zero. A 100% discount is rejected, because giving an item away is a different business decision from a promotion.
+- An empty rule set is valid: the cart still calculates, and every item shows its base price with a no-offer reason.
+- Rule and item IDs must be unique; a later row with a duplicate ID is skipped with a reason.
 - After the first **Calculate Discounts**, results stay live: adding or removing a rule, or loading a new cart, re-runs the engine immediately.
-- The repo's original `sample-data/rules.csv` didn't include RULE-04 or the `min_cart_value` column. I updated it to match the brief. The 6-column format still loads.
+- The original `sample-data/rules.csv` did not include RULE-04 or the `min_cart_value` column, so it was updated to match the brief. The 6-column format still loads.
 
 ## Deploying (Vercel)
 
 1. Import the repo in Vercel. It detects Vite (`npm run build`, output `dist/`) and the `api/` function automatically.
-2. Add `GEMINI_API_KEY` (free from Google AI Studio) under Project → Settings → Environment Variables.
-3. Deploy. This project is live at https://discount-engine-assignment-iota-nine.vercel.app
+2. Add `GEMINI_API_KEY` (from Google AI Studio) under Project → Settings → Environment Variables. `GEMINI_MODEL` and `GEMINI_FALLBACK_MODEL` are optional.
+3. Deploy. This project is deployed at https://discount-engine-assignment-iota-nine.vercel.app
 
-On a pure static host (Netlify drop, GitHub Pages) everything works except plain-English rules, which show "not configured on this deployment".
+On a static-only host (Netlify drop, GitHub Pages) everything works except plain-English rules, which show "not configured on this deployment".
