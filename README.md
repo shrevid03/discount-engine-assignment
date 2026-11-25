@@ -6,6 +6,8 @@ A customer-facing cart pricing engine. Each item gets the offer that saves the c
 
 **Live app:** https://discount-engine-assignment-iota-nine.vercel.app
 
+**Video walkthrough:** https://drive.google.com/file/d/1Vs3ABmwbNh9OfrpV6xvn9vt8n1UE1-jA/view?usp=sharing (recorded on the live deployment)
+
 ## Highlights
 
 - **A pricing conflict in the brief: a discount that raises the price.** Item offers apply first and the cart offer is checked against what remains. A Rs.4,000 cart therefore pays Rs.3,600, but adding "Rs.1 off Nordic Basics" brings the subtotal to Rs.3,999, the cart offer is lost, and the customer pays **Rs.399 more**. The app keeps the brief's algorithm and makes the conflict visible instead: the confirm card turns red ("This discount makes the customer pay Rs.399 more") and its button becomes "Add anyway", and the checkout flags the conflict to the operator if such a rule is active. The **Discount paradox** scenario demonstrates it.
