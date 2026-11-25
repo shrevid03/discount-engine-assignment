@@ -16,7 +16,7 @@ A customer-facing cart pricing engine. Each item gets the offer that saves the c
 - **LLM output is measured and validated, not trusted.** In the most recent evaluation run, 29 of the 29 completed cases were correct, with **0 unsafe acceptances**. 12 of the 41 cases did not complete because of provider rate limiting and are reported as not run. The evaluation targets the most damaging failure mode: a condition the engine cannot represent being silently dropped ("15% off up to ₹200" becoming an uncapped 15%). Such inputs are returned as unsupported rather than converted into an incorrect rule ([results](evals/results.md)).
 - **Incomplete orders are not priced silently.** A PDF with unreadable rows is held for review ("Rows found 5 · readable 2 · could not be read 3"), and the current cart stays in place until someone confirms. Clean PDFs load automatically.
 - **A second conflict in the brief:** its stacking order for ITEM-02 gives Rs.629, while its own "biggest saving" principle gives Rs.614 ([details](#proposed-changes-to-the-brief)).
-- **Input modes are decoupled from the engine.** Each input mode is one adapter in `src/inputs/` that goes through a shared validator, so adding a fourth mode requires no changes in `engine/`. 63 tests run in CI.
+- **Input modes are decoupled from the engine.** Each input mode is one adapter in `src/inputs/` that goes through a shared validator, so adding another input mode requires no changes in `engine/`. 63 tests run in CI.
 
 ## Run locally
 
